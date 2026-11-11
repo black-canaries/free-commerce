@@ -45,7 +45,7 @@ Canvases to create in canvas-agents (one per area), with links recorded in `docs
   *Accept:* Claude Code can read from and write to the canvases via MCP; a test frame is created and deleted successfully.
 - [x] **0.7 ⚑ Domain model.** Start from `domain-model-draft.md` in the project, refine it, resolve its open modelling questions with Jon, and commit `docs/domain-model.md`. It must cover entities and relationships, state machines (including resumable payment states and draft orders), the glossary, invariants, what is in v0.1, and what is "designed for, not built". Challenge every entity and field against the prime directive: cut what v0.1 doesn't need.
   *Accept:* Jon reviews and approves; every Phase 1 and 2 task refers to this doc rather than inventing entities.
-- [ ] **0.8 🔒 Schema conventions.** In `schema`: `Money` (minor units + currency, helpers for add/multiply/allocate with rounding), prefixed ID generator, timestamp helpers, pagination and error shapes (typed error codes).
+- [x] **0.8 🔒 Schema conventions.** In `schema`: `Money` (minor units + currency, helpers for add/multiply/allocate with rounding), prefixed ID generator, timestamp helpers, pagination and error shapes (typed error codes).
   *Accept:* property-based tests for money (allocation never loses or invents a cent).
 - [ ] **0.9 Repository interfaces + in-memory adapter.** Define `ProductRepository`, `CartRepository`, `OrderRepository` (minimal), `transaction()`; implement an in-memory adapter; create `adapter-testkit` skeleton that runs against any adapter.
   *Accept:* testkit passes against the in-memory adapter.
