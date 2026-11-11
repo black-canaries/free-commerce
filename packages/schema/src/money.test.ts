@@ -69,19 +69,29 @@ describe("add / subtract / multiply", () => {
     ).toThrow(TypeError);
   });
 
-  it("multiply rounds half away from zero and always yields an integer", () => {
-    expect(multiply({ amount: 5, currency: "USD" }, 0.5).amount).toBe(3);
-    expect(multiply({ amount: -5, currency: "USD" }, 0.5).amount).toBe(-3);
+  it("multiply is exact, rounds half away from zero and never returns -0", () => {
+    const u = (amount: number) => ({ amount, currency: "USD" });
+    expect(multiply(u(5), 1, 2).amount).toBe(3);
+    expect(multiply(u(-5), 1, 2).amount).toBe(-3);
+    expect(multiply(u(1000), 825, 10000).amount).toBe(83);
+    expect(Object.is(multiply(u(-1), 3, 10).amount, 0)).toBe(true);
+    expect(multiply(u(7), 3).amount).toBe(21);
+    for (const bad of [
+      [1.5, 1],
+      [1, 0],
+      [1, -2],
+      [Number.NaN, 1],
+    ] as const)
+      expect(() => multiply(u(1), bad[0], bad[1])).toThrow(RangeError);
     fc.assert(
       fc.property(
         amount,
-        fc.double({ min: 0, max: 5, noNaN: true }),
-        (a, f) => {
-          expect(
-            Number.isInteger(
-              multiply({ amount: a, currency: "USD" }, f).amount,
-            ),
-          ).toBe(true);
+        fc.integer({ min: 0, max: 1000 }),
+        fc.integer({ min: 1, max: 1000 }),
+        (a, n, d) => {
+          const r = multiply(u(a), n, d).amount;
+          expect(Math.abs(r - (a * n) / d)).toBeLessThanOrEqual(0.5 + 1e-6);
+          expect(Object.is(r, -0)).toBe(false);
         },
       ),
     );

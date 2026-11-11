@@ -9,11 +9,18 @@ export const idSchema = (prefix: string) =>
 
 /**
  * Prefixed, time-sortable ID (e.g. `prod_01J...`): 48-bit ms timestamp then 80 random bits, ULID layout.
- * Uses the Web Crypto `getRandomValues` global (Node, Bun, edge, Expo).
+ * Uses the Web Crypto `getRandomValues` global (Node, Bun, edge). React Native/Hermes has none:
+ * apps must install a polyfill (`expo-crypto` or `react-native-get-random-values`) first.
  */
 export const newId = (prefix: string, now: number = Date.now()): string => {
   if (!PREFIX.test(prefix))
     throw new RangeError("ID prefix must be 2-6 lowercase letters");
+  if (!Number.isSafeInteger(now) || now < 0)
+    throw new RangeError("now must be a non-negative integer (ms)");
+  if (typeof globalThis.crypto?.getRandomValues !== "function")
+    throw new Error(
+      "crypto.getRandomValues is unavailable; install a polyfill (see newId docs)",
+    );
   let time = "";
   for (let t = now, i = 0; i < 10; i++, t = Math.floor(t / 32))
     time = ALPHABET[t % 32] + time;

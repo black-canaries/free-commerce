@@ -20,6 +20,11 @@ describe("newId", () => {
     expect(newId("prod", 1_000)).not.toBe(a);
   });
 
+  it("rejects bad timestamps", () => {
+    for (const bad of [1.5, -1])
+      expect(() => newId("prod", bad)).toThrow(RangeError);
+  });
+
   it("rejects bad prefixes", () => {
     expect(() => newId("Prod")).toThrow(RangeError);
   });
@@ -40,6 +45,7 @@ describe("page and error shapes", () => {
   it("defaults and bounds limit", () => {
     expect(PageQuery.parse({}).limit).toBe(20);
     expect(PageQuery.safeParse({ limit: 101 }).success).toBe(false);
+    expect(PageQuery.parse({ limit: "50" }).limit).toBe(50);
   });
 
   it("pageOf wraps items with nullable cursor", () => {

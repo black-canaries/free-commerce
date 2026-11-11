@@ -1,9 +1,9 @@
 import { z } from "zod";
 
-/** Cursor pagination request. Cursors are opaque to clients. */
+/** Cursor pagination request (`limit` is coerced: query strings are always strings). Cursors are opaque to clients. */
 export const PageQuery = z.object({
   cursor: z.string().optional(),
-  limit: z.number().int().min(1).max(100).default(20),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 export type PageQuery = z.infer<typeof PageQuery>;
 

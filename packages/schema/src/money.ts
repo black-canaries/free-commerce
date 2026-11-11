@@ -69,10 +69,30 @@ export const subtract = (a: Money, b: Money): Money => {
   return safe(a.amount - b.amount, a.currency);
 };
 
-/** Multiply by a factor (quantity, rate), rounding half away from zero to a whole minor unit. */
-export const multiply = (m: Money, factor: number): Money => {
-  const x = m.amount * factor;
-  return safe(Math.sign(x) * Math.round(Math.abs(x)), m.currency);
+/**
+ * Multiply by the exact rational `numerator / denominator` (quantity: `multiply(m, 3)`; 8.25% rate:
+ * `multiply(m, 825, 10000)`), rounding half away from zero to a whole minor unit. Integer-only on
+ * purpose: float rates can land just under a .5 boundary and round the wrong way.
+ */
+export const multiply = (
+  m: Money,
+  numerator: number,
+  denominator = 1,
+): Money => {
+  if (
+    !Number.isSafeInteger(numerator) ||
+    !Number.isSafeInteger(denominator) ||
+    denominator <= 0
+  )
+    throw new RangeError(
+      "Factor must be an integer numerator over a positive integer denominator",
+    );
+  const n = BigInt(m.amount) * BigInt(numerator);
+  const d = BigInt(denominator);
+  const abs = n < 0n ? -n : n;
+  const q = Number((2n * abs + d) / (2n * d));
+  // `|| 0` avoids returning -0 when a negative amount rounds to zero.
+  return safe((n < 0n ? -q : q) || 0, m.currency);
 };
 
 /**
