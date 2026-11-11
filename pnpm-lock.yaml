@@ -76,6 +76,18 @@ importers:
         specifier: ^4.10.2
         version: 4.10.2
 
+  packages/server:
+    dependencies:
+      '@free-commerce/schema':
+        specifier: workspace:*
+        version: link:../schema
+      hono:
+        specifier: 4.13.14
+        version: 4.13.14
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+
 packages:
 
   '@biomejs/biome@2.6.6':
@@ -827,6 +839,10 @@ packages:
 
   get-tsconfig@4.14.3:
     resolution: {integrity: sha512-++QEw4DIY7WGoukz+/+A/8dGYPT9l9yIadnmSgZ8Rjr3YVSVDipQSO9CdnJo9ePqFqUUqh+wk9uIaoiAwsiPkA==}
+
+  hono@4.13.14:
+    resolution: {integrity: sha512-yhRLQ21U6qa9Hsu2N7Qcbh8tE+WKEcoErjIo56LeSGiGXGp9sA7UpE86Ui9uexb61KakiGwuHMn2QdV7w6i6kQ==}
+    engines: {node: '>=16.9.0'}
 
   human-id@4.2.2:
     resolution: {integrity: sha512-Z+8unD6em/MJwyrkWQ2M3wygRGI1+MztbutiNwk1DCuEPXOZRWGjtcMPZYP1exY9iNZMhd7ZOSMQSo9WYtiQRw==}
@@ -1714,6 +1730,8 @@ snapshots:
   get-tsconfig@4.14.3:
     dependencies:
       resolve-pkg-maps: 1.0.0
+
+  hono@4.13.14: {}
 
   human-id@4.2.2: {}
 
