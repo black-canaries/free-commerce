@@ -104,6 +104,17 @@ describe("address", () => {
     });
   });
 
+  it.each(["HK", "AE"])(
+    "%s has no postal-code rule: postal code optional",
+    (country) => {
+      const a = addr({ line1: "1 Main St", city: "X", region: "R", country });
+      expect(validateAddress(a)).toEqual({ ok: true });
+      expect(validateAddress({ ...a, postalCode: "anything" })).toEqual({
+        ok: true,
+      });
+    },
+  );
+
   it("rejects unknown countries", () => {
     expect(
       validateAddress(addr({ line1: "x", city: "y", country: "ZZ" })),

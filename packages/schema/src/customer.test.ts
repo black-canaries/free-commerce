@@ -27,6 +27,22 @@ describe("Customer and Address", () => {
     );
   });
 
+  it("anonymised customers validate with null PII; null email otherwise is rejected", () => {
+    const gone = {
+      ...customer,
+      email: null,
+      taxId: null,
+      anonymisedAt: "2026-02-01T00:00:00.000Z",
+    };
+    expect(Customer.safeParse(gone).success).toBe(true);
+    expect(Customer.safeParse({ ...customer, email: null }).success).toBe(
+      false,
+    );
+    expect(
+      Customer.safeParse({ ...gone, email: "a@example.com" }).success,
+    ).toBe(false);
+  });
+
   it("lists PII fields that all exist on Customer", () => {
     for (const f of CUSTOMER_PII_FIELDS) expect(f in customer).toBe(true);
   });

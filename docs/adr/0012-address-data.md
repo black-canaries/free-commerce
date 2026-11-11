@@ -13,11 +13,12 @@ Task 1.5 needs per-country postal-code validation, required fields and local lin
 - **`postcode-validator` 3.10.26** (MIT, released 2026-10): per-country postal-code regexes, no dependencies, ~32 KB. Validation only.
 - Hand-written rules: forbidden by the brief.
 
-Chosen: the last two together. `i18n-iso-countries` (stale since 2025-02, 620 KB) was not needed: country is validated by `postcode-validator`'s country list.
+Chosen: the last two together. `i18n-iso-countries` (stale since 2025-02, 620 KB) was not needed: the country code is validated against the formatter's own country list (it names a country only for known ISO 3166-1 codes), so no extra dependency.
 
 ## How rules are derived (no hand-written per-country rules)
 
-- Postal code: required and pattern-checked when `postcode-validator` has a pattern for the country; countries without one accept anything.
+- Country: must be a code the formatter knows (HK, AE pass; ZZ is rejected).
+- Postal code: required and pattern-checked when `postcode-validator` has a pattern for the country; countries without one (e.g. HK, AE) accept any or no postal code.
 - Region: required when the country's address template prints it (probed by formatting with a sentinel region). US, JP, BR, CA, AU require it; GB, DE, FR do not.
 - Output: `formatAddress` returns recipient, company, street, line2, then the template's city/region/postcode layout; the country name is left to the caller (localised).
 

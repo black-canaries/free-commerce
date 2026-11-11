@@ -14,20 +14,25 @@ export type TaxId = z.infer<typeof TaxId>;
 
 /**
  * A guest is identified by email only; a registered customer also has an auth identity.
- * Personal fields are listed in `CUSTOMER_PII_FIELDS`; anonymisation (task 2.9) nulls exactly those, sets
+ * Personal fields are listed in `CUSTOMER_PII_FIELDS`; anonymisation (task 2.9) nulls exactly those and sets
  * `anonymisedAt`, and deletes the customer's addresses (`Address` is entirely personal data).
  */
-export const Customer = z.object({
-  id: CustomerId,
-  kind: z.enum(["guest", "registered"]),
-  email: z.email(),
-  name: z.string().trim().min(1).nullable(),
-  phone: z.string().trim().min(1).nullable(),
-  taxId: TaxId.nullable(),
-  defaultAddressId: AddressId.nullable(),
-  createdAt: Timestamp,
-  anonymisedAt: Timestamp.nullable(),
-});
+export const Customer = z
+  .object({
+    id: CustomerId,
+    kind: z.enum(["guest", "registered"]),
+    email: z.email().nullable(),
+    name: z.string().trim().min(1).nullable(),
+    phone: z.string().trim().min(1).nullable(),
+    taxId: TaxId.nullable(),
+    defaultAddressId: AddressId.nullable(),
+    createdAt: Timestamp,
+    anonymisedAt: Timestamp.nullable(),
+  })
+  .refine((c) => (c.email === null) === (c.anonymisedAt !== null), {
+    message: "email is null exactly when the customer is anonymised",
+    path: ["email"],
+  });
 export type Customer = z.infer<typeof Customer>;
 
 export const CUSTOMER_PII_FIELDS = [

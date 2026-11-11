@@ -42,7 +42,14 @@ const needsRegion = (country: string): boolean =>
     { output: "string" },
   ).includes(PROBE);
 
-const countryKnown = (country: string): boolean => {
+/** ISO 3166-1 alpha-2 membership, from the formatter's country list: it resolves a known code to a name and echoes an unknown one back. */
+const countryKnown = (country: string): boolean =>
+  format(
+    { countryCode: country },
+    { output: "string", appendCountry: true },
+  ).trim() !== country;
+
+const hasPostcodeRule = (country: string): boolean => {
   try {
     return postcodeValidatorExistsForCountry(country);
   } catch {
@@ -50,23 +57,27 @@ const countryKnown = (country: string): boolean => {
   }
 };
 
+const postalIssue = (a: Address): AddressIssue | undefined => {
+  if (!hasPostcodeRule(a.country)) return undefined;
+  if (a.postalCode === undefined)
+    return { field: "postalCode", code: "required" };
+  return postcodeValidator(a.postalCode, a.country)
+    ? undefined
+    : { field: "postalCode", code: "invalid" };
+};
+
 /**
  * Country-aware validation. Postal codes follow `postcode-validator`'s per-country patterns (required
- * when the country has one); the region is required where the country's address format prints one.
- * Countries without a postal-code pattern accept any (or no) postal code.
+ * when the country has one, otherwise optional and unchecked); the region is required where the country's address format prints one.
  */
 export const validateAddress = (a: Address): AddressCheck => {
-  const issues: AddressIssue[] = [];
   if (!countryKnown(a.country))
-    issues.push({ field: "country", code: "invalid" });
-  else {
-    if (a.postalCode === undefined)
-      issues.push({ field: "postalCode", code: "required" });
-    else if (!postcodeValidator(a.postalCode, a.country))
-      issues.push({ field: "postalCode", code: "invalid" });
-    if (a.region === undefined && needsRegion(a.country))
-      issues.push({ field: "region", code: "required" });
-  }
+    return { ok: false, issues: [{ field: "country", code: "invalid" }] };
+  const issues: AddressIssue[] = [];
+  const postal = postalIssue(a);
+  if (postal) issues.push(postal);
+  if (a.region === undefined && needsRegion(a.country))
+    issues.push({ field: "region", code: "required" });
   return issues.length === 0 ? { ok: true } : { ok: false, issues };
 };
 
