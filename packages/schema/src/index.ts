@@ -1,3 +1,5 @@
+export * from "./address.js";
+export * from "./customer.js";
 export * from "./errors.js";
 export * from "./id.js";
 export * from "./money.js";

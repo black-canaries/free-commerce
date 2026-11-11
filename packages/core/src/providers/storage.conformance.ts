@@ -38,6 +38,15 @@ export function storageConformance(
       expect(await s.get("k")).toBeNull();
     });
 
+    it("a directory-like or file-prefix key is not an object", async () => {
+      const s = make();
+      await s.put("d/x.bin", bytes, "text/plain");
+      expect(await s.get("d")).toBeNull();
+      expect(await s.get("d/x.bin/y")).toBeNull();
+      const err = await s.signedUrl("d", 60).catch((e: unknown) => e);
+      expect((err as ProviderError).code).toBe("not_found");
+    });
+
     it("signedUrl returns a url for an existing key", async () => {
       const s = make();
       await s.put("k", bytes, "text/plain");
