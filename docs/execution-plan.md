@@ -47,7 +47,7 @@ Canvases to create in canvas-agents (one per area), with links recorded in `docs
   *Accept:* Jon reviews and approves; every Phase 1 and 2 task refers to this doc rather than inventing entities.
 - [x] **0.8 🔒 Schema conventions.** In `schema`: `Money` (minor units + currency, helpers for add/multiply/allocate with rounding), prefixed ID generator, timestamp helpers, pagination and error shapes (typed error codes).
   *Accept:* property-based tests for money (allocation never loses or invents a cent).
-- [ ] **0.9 Repository interfaces + in-memory adapter.** Define `ProductRepository`, `CartRepository`, `OrderRepository` (minimal), `transaction()`; implement an in-memory adapter; create `adapter-testkit` skeleton that runs against any adapter.
+- [x] **0.9 Repository interfaces + in-memory adapter.** Define `ProductRepository`, `CartRepository`, `OrderRepository` (minimal), `transaction()`; implement an in-memory adapter; create `adapter-testkit` skeleton that runs against any adapter.
   *Accept:* testkit passes against the in-memory adapter.
 - [x] **0.10 Provider interface conventions.** Define the pattern for external-service providers (payments, email, SMS, storage, search, auth, captcha): interface, fake implementation for tests, config schema, error mapping, and a conformance test helper.
   *Accept:* one worked example (a fake `StorageProvider`) with conformance tests; documented in an ADR.

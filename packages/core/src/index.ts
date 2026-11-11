@@ -4,3 +4,13 @@ export {
   type StorageProvider,
   storageConfigSchema,
 } from "./providers/storage";
+export type {
+  CartRepository,
+  Database,
+  Entity,
+  OrderRepository,
+  Page,
+  ProductRepository,
+  Repositories,
+  Repository,
+} from "./repositories";
