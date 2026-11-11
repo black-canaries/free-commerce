@@ -1,4 +1,4 @@
-import type { PageQuery } from "@free-commerce/schema";
+import type { PageQuery, Product } from "@free-commerce/schema";
 
 /** @experimental Placeholder entity shape; Phase 1 replaces it with the real Zod-derived types. */
 export type Entity = { id: string };
@@ -17,7 +17,7 @@ export interface Repository<T extends Entity> {
 }
 
 /** @experimental */
-export type ProductRepository<T extends Entity = Entity> = Repository<T>;
+export type ProductRepository = Repository<Product>;
 /** @experimental */
 export type CartRepository<T extends Entity = Entity> = Repository<T>;
 /** @experimental */
