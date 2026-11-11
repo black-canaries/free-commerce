@@ -6,7 +6,7 @@ export type CurrencyCode = z.infer<typeof CurrencyCode>;
 
 /** Integer minor units + currency. Never a float. */
 export const Money = z.object({
-  amount: z.number().int().safe(),
+  amount: z.number().int(),
   currency: CurrencyCode,
 });
 export type Money = z.infer<typeof Money>;
@@ -44,7 +44,11 @@ const EXPONENTS: Record<string, number> = {
   UYW: 4,
 };
 
-/** Number of decimal places between major and minor units (JPY 0, USD 2, KWD 3). */
+/**
+ * Number of decimal places between major and minor units (JPY 0, USD 2, KWD 3). Display-scoped:
+ * payment providers may scale some currencies differently, so payment code must take the provider's
+ * rules for amounts it sends, not this table.
+ */
 export const minorUnitExponent = (currency: CurrencyCode): number =>
   EXPONENTS[currency] ?? 2;
 
@@ -62,11 +66,6 @@ const sameCurrency = (a: Money, b: Money): void => {
 export const add = (a: Money, b: Money): Money => {
   sameCurrency(a, b);
   return safe(a.amount + b.amount, a.currency);
-};
-
-export const subtract = (a: Money, b: Money): Money => {
-  sameCurrency(a, b);
-  return safe(a.amount - b.amount, a.currency);
 };
 
 /**

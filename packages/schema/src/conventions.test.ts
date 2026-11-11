@@ -25,8 +25,9 @@ describe("newId", () => {
       expect(() => newId("prod", bad)).toThrow(RangeError);
   });
 
-  it("rejects bad prefixes", () => {
+  it("rejects bad prefixes in newId and idSchema", () => {
     expect(() => newId("Prod")).toThrow(RangeError);
+    expect(() => idSchema("a.*")).toThrow(RangeError);
   });
 });
 
@@ -38,6 +39,7 @@ describe("Timestamp", () => {
     expect(Timestamp.safeParse("2026-01-01T00:00:00+02:00").success).toBe(
       false,
     );
+    expect(Timestamp.safeParse("2026-01-01T00:00:00Z").success).toBe(false);
   });
 });
 
@@ -46,6 +48,9 @@ describe("page and error shapes", () => {
     expect(PageQuery.parse({}).limit).toBe(20);
     expect(PageQuery.safeParse({ limit: 101 }).success).toBe(false);
     expect(PageQuery.parse({ limit: "50" }).limit).toBe(50);
+    expect(PageQuery.safeParse({ cursor: "x".repeat(513) }).success).toBe(
+      false,
+    );
   });
 
   it("pageOf wraps items with nullable cursor", () => {

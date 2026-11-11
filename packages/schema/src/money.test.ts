@@ -1,13 +1,6 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import {
-  add,
-  allocate,
-  Money,
-  minorUnitExponent,
-  multiply,
-  subtract,
-} from "./money.js";
+import { add, allocate, Money, minorUnitExponent, multiply } from "./money.js";
 
 const amount = fc.integer({ min: -1_000_000_000_000, max: 1_000_000_000_000 });
 const ratios = fc
@@ -52,13 +45,14 @@ describe("allocate", () => {
   });
 });
 
-describe("add / subtract / multiply", () => {
-  it("add and subtract are inverse", () => {
+describe("add / multiply", () => {
+  it("add is commutative and exact", () => {
     fc.assert(
       fc.property(amount, amount, (a, b) => {
         const x = { amount: a, currency: "USD" };
         const y = { amount: b, currency: "USD" };
-        expect(subtract(add(x, y), y)).toEqual(x);
+        expect(add(x, y)).toEqual(add(y, x));
+        expect(add(x, y).amount).toBe(a + b);
       }),
     );
   });

@@ -11,3 +11,5 @@ Related choices kept dependency-free on purpose: ISO 4217 codes are format-check
 
 - `zod` ships in every client bundle that imports `schema`; use `zod/mini` later if bundle budgets (3.1) demand it.
 - Currencies with an unlisted non-2 exponent would be mis-scaled in display code; extend the table when added by ISO.
+- `minorUnitExponent` is display-scoped. Providers may scale some currencies differently, so the payments task must use the provider's rules for amounts it sends.
+- IDs sort by creation time only to the millisecond; order within one ms is random.

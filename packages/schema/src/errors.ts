@@ -14,7 +14,10 @@ export const ERROR_CODES = [
 export const ErrorCode = z.enum(ERROR_CODES);
 export type ErrorCode = z.infer<typeof ErrorCode>;
 
-/** Wire shape of every API error. `message` is for developers; clients branch on `code`. */
+/**
+ * Wire shape of every API error. `message` is for developers; clients branch on `code`.
+ * `details` is only for `validation_failed` (per-field issues); `internal` carries only `requestId`.
+ */
 export const ApiError = z.object({
   code: ErrorCode,
   message: z.string(),
