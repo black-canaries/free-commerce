@@ -1,4 +1,5 @@
 export * from "./address.js";
+export * from "./catalog.js";
 export * from "./customer.js";
 export * from "./errors.js";
 export * from "./id.js";

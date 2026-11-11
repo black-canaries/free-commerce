@@ -67,7 +67,7 @@ Canvases to create in canvas-agents (one per area), with links recorded in `docs
 ## Phase 1: Backend core
 No UI in this phase, so no design gates. API design should still favour the screens that will consume it, so read the Admin canvas (when it exists) before finalizing admin routes. Each task follows the domain model.
 
-- [ ] **1.1 Catalog domain.** Products, options, variants, collections, product status. Variant behaviour fields: `deliveryType`, `priceMode`, `quantityUnit`, `taxCategory`, with validation (for example, weight and dimensions only for `physical`; `manageInventory` defaults by delivery type). Schemas, repository methods, services, tests.
+- [x] **1.1 Catalog domain.** Products, options, variants, collections, product status. Variant behaviour fields: `deliveryType`, `priceMode`, `quantityUnit`, `taxCategory`, with validation (for example, weight and dimensions only for `physical`; `manageInventory` defaults by delivery type). Schemas, repository methods, services, tests.
 - [ ] **1.2 Pricing.** Multi-currency prices per variant; price resolution for a currency/region. Customer-defined mode: min, max and suggested amounts per currency, with validation of a chosen amount (within bounds, at least the payment provider minimum).
 - [ ] **1.3 🔒 Inventory.** Stock levels per variant, reservations with expiry, release and commit. Only variants that manage inventory create reservations. Expiry is enforced at read time (expired reservations never count); the cleanup sweeper arrives in 2.11.
   *Accept:* property-based tests: reservations never oversell under concurrent attempts (in-memory and Postgres); digital and `none` variants never reserve stock by default.

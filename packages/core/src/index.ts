@@ -1,3 +1,12 @@
+export {
+  archiveProduct,
+  CatalogError,
+  createProduct,
+  type ProductInput,
+  publishProduct,
+  updateProduct,
+  type VariantInput,
+} from "./catalog/catalog";
 export { ProviderError, type ProviderErrorCode } from "./providers/error";
 export {
   type StorageConfig,

@@ -5,7 +5,11 @@ import type {
   Repository,
 } from "@free-commerce/core";
 
-type State = Record<keyof Repositories, Map<string, Entity>>;
+type State = {
+  [K in keyof Repositories]: Repositories[K] extends Repository<infer T>
+    ? Map<string, T>
+    : never;
+};
 
 const emptyState = (): State => ({
   products: new Map(),
@@ -13,7 +17,9 @@ const emptyState = (): State => ({
   orders: new Map(),
 });
 
-const repository = (rows: () => Map<string, Entity>): Repository<Entity> => ({
+const repository = <T extends Entity>(
+  rows: () => Map<string, T>,
+): Repository<T> => ({
   async get(id) {
     const row = rows().get(id);
     return row ? structuredClone(row) : null;
@@ -27,7 +33,7 @@ const repository = (rows: () => Map<string, Entity>): Repository<Entity> => ({
       .filter((id) => cursor === undefined || id > cursor);
     const page = ids.slice(0, limit);
     return {
-      items: page.map((id) => structuredClone(rows().get(id) as Entity)),
+      items: page.map((id) => structuredClone(rows().get(id) as T)),
       nextCursor: ids.length > limit ? (page.at(-1) ?? null) : null,
     };
   },
