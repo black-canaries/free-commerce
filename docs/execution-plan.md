@@ -47,7 +47,7 @@ Canvases to create in canvas-agents (one per area), with links recorded in `docs
   *Accept:* Jon reviews and approves; every Phase 1 and 2 task refers to this doc rather than inventing entities.
 - [x] **0.8 🔒 Schema conventions.** In `schema`: `Money` (minor units + currency, helpers for add/multiply/allocate with rounding), prefixed ID generator, timestamp helpers, pagination and error shapes (typed error codes).
   *Accept:* property-based tests for money (allocation never loses or invents a cent).
-- [ ] **0.9 Repository interfaces + in-memory adapter.** Define `ProductRepository`, `CartRepository`, `OrderRepository` (minimal), `transaction()`; implement an in-memory adapter; create `adapter-testkit` skeleton that runs against any adapter.
+- [x] **0.9 Repository interfaces + in-memory adapter.** Define `ProductRepository`, `CartRepository`, `OrderRepository` (minimal), `transaction()`; implement an in-memory adapter; create `adapter-testkit` skeleton that runs against any adapter.
   *Accept:* testkit passes against the in-memory adapter.
 - [x] **0.10 Provider interface conventions.** Define the pattern for external-service providers (payments, email, SMS, storage, search, auth, captcha): interface, fake implementation for tests, config schema, error mapping, and a conformance test helper.
   *Accept:* one worked example (a fake `StorageProvider`) with conformance tests; documented in an ADR.
@@ -78,7 +78,7 @@ No UI in this phase, so no design gates. API design should still favour the scre
 - [ ] **1.7 adapter-postgres.** Drizzle schema, SQL migrations per module, repository implementations, transactions.
   *Accept:* complete `adapter-testkit` suite passes on Postgres (Testcontainers or a CI service) and in-memory; an upgrade-migration test harness exists for later releases.
 - [ ] **1.8 ⚑ Repository interface review.** Check for leakage of Drizzle/SQL concepts. Sketch what a Convex adapter would need. Freeze the interface only after review.
-- [ ] **1.9 Server skeleton and ops baseline.** Hono app factory, `/store` and `/admin` route groups, error handling with typed codes, request validation from schemas, idempotency-key middleware, structured logging with request IDs, OpenTelemetry setup, `/health` and `/ready` endpoints, rate limiting middleware, validated env config.
+- [x] **1.9 Server skeleton and ops baseline.** Hono app factory, `/store` and `/admin` route groups, error handling with typed codes, request validation from schemas, idempotency-key middleware, structured logging with request IDs, OpenTelemetry setup, `/health` and `/ready` endpoints, rate limiting middleware, validated env config.
   *Accept:* a request produces a log line and trace with the same request ID; health endpoints reflect DB connectivity; rate limit returns a typed error.
 - [ ] **1.10 🔒 Auth, API keys and sessions.** `AuthProvider` interface, Better Auth implementation, separate admin and customer auth, session middleware. **Publishable keys (storefront, read and cart scopes) and secret keys (server integrations, scoped), stored hashed and shown once, with rotation and revocation.** CORS configuration for storefronts on other origins; cookie sessions for web and bearer tokens for React Native.
   *Accept:* admin routes reject unauthenticated requests; customer can register, log in, and read their own orders only; a publishable key cannot call admin routes; a revoked key stops working immediately; secrets are never retrievable after creation.
