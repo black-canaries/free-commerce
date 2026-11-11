@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   isSafeKey,
@@ -7,7 +7,7 @@ import {
   type StorageProvider,
 } from "@free-commerce/core";
 
-const MAX_TTL_SECONDS = 7 * 24 * 3600;
+const MAX_TTL_SECONDS = 24 * 3600;
 const NAME = "local-storage";
 
 export interface LocalStorageOptions {
@@ -68,12 +68,15 @@ export function createLocalStorage(opts: LocalStorageOptions): LocalStorage {
     async put(key, body, contentType) {
       checkKey(key);
       try {
+        // Type first, data last: an object exists only once its data is renamed into place.
         for (const [path, content] of [
-          [data(key), body],
           [type(key), contentType],
+          [data(key), body],
         ] as const) {
           await mkdir(dirname(path), { recursive: true });
-          await writeFile(path, content);
+          const tmp = `${path}.${crypto.randomUUID()}.tmp`;
+          await writeFile(tmp, content);
+          await rename(tmp, path);
         }
       } catch (e) {
         throw new ProviderError(NAME, "unknown", "write failed", { cause: e });
@@ -94,7 +97,7 @@ export function createLocalStorage(opts: LocalStorageOptions): LocalStorage {
       )
         throw new ProviderError(NAME, "rejected", "invalid expiry");
       const exists = await stat(data(key)).then(
-        () => true,
+        (s) => s.isFile(),
         (e: unknown) => missingOr(e, false),
       );
       if (!exists) throw new ProviderError(NAME, "not_found", key);
@@ -109,7 +112,10 @@ export function createLocalStorage(opts: LocalStorageOptions): LocalStorage {
 }
 
 function missingOr<T>(e: unknown, fallback: T): T {
-  if ((e as NodeJS.ErrnoException).code === "ENOENT") return fallback;
+  // Key is a directory (EISDIR), a prefix of a file (ENOTDIR) or too long: no such object.
+  const code = (e as NodeJS.ErrnoException).code ?? "";
+  if (["ENOENT", "ENOTDIR", "EISDIR", "ENAMETOOLONG"].includes(code))
+    return fallback;
   throw new ProviderError(NAME, "unknown", "filesystem error", { cause: e });
 }
 

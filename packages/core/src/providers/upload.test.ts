@@ -15,6 +15,17 @@ describe("validateUpload", () => {
     expect(() => validateUpload(new Uint8Array(11), opts)).toThrow(/size/);
     expect(() => validateUpload(new Uint8Array(), opts)).toThrow(/size/);
   });
+  it("accepts a body exactly at the size limit and rejects a non-finite limit", () => {
+    const exact = new Uint8Array(10);
+    exact.set(png);
+    expect(validateUpload(exact, opts).ext).toBe("png");
+    expect(() =>
+      validateUpload(png, { ...opts, maxBytes: Number.NaN }),
+    ).toThrow(/finite/);
+    expect(() =>
+      validateUpload(png, { ...opts, maxBytes: Number.POSITIVE_INFINITY }),
+    ).toThrow(/finite/);
+  });
   it("rejects a disallowed or unknown type", () => {
     const jpg = new Uint8Array([0xff, 0xd8, 0xff, 0]);
     expect(() => validateUpload(jpg, opts)).toThrow(/not allowed/);
@@ -34,6 +45,9 @@ describe("validateUpload", () => {
     const o = { maxBytes: 99, allowedTypes: ["image/webp"] };
     expect(validateUpload(webp, o).ext).toBe("webp");
     webp[8] = 0;
+    expect(() => validateUpload(webp, o)).toThrow();
+    webp[8] = 0x57;
+    webp[0] = 0; // WEBP marker without RIFF
     expect(() => validateUpload(webp, o)).toThrow();
   });
 });

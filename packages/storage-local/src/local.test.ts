@@ -114,7 +114,7 @@ describe("local signed URLs", () => {
   it("rejects bad expiry values", async () => {
     const { s } = await make();
     await s.put("a.bin", body, "text/plain");
-    for (const n of [0, -1, 1.5, 8 * 24 * 3600]) {
+    for (const n of [0, -1, 1.5, 25 * 3600]) {
       await expect(s.signedUrl("a.bin", n)).rejects.toMatchObject({
         code: "rejected",
       });
@@ -147,11 +147,10 @@ describe("local keys and privacy", () => {
   });
 
   it("surfaces unexpected fs errors as ProviderError unknown without leaking the secret", async () => {
-    const { s, root } = await make();
+    const { s } = await make();
     await s.put("a", body, "text/plain");
     const err = await s.put("a/b", body, "text/plain").catch((e: unknown) => e);
     expect((err as ProviderError).code).toBe("unknown");
     expect(String(err)).not.toContain(SECRET);
-    expect(root).toBeTruthy();
   });
 });

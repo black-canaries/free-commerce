@@ -6,7 +6,7 @@ import {
 } from "@free-commerce/core";
 import { AwsClient } from "aws4fetch";
 
-const MAX_TTL_SECONDS = 7 * 24 * 3600; // SigV4 presign limit
+const MAX_TTL_SECONDS = 24 * 3600; // short-lived by policy (SigV4 allows 7 days)
 const NAME = "s3-storage";
 
 export interface S3StorageOptions extends StorageConfig {

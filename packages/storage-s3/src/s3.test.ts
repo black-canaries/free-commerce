@@ -92,7 +92,7 @@ describe("s3 signing", () => {
   it("rejects bad expiry and unsafe keys without any request", async () => {
     const f = fakeS3();
     const s = make(f.fetch);
-    for (const n of [0, 1.5, 8 * 24 * 3600]) {
+    for (const n of [0, 1.5, 25 * 3600]) {
       await expect(s.signedUrl("a.bin", n)).rejects.toMatchObject({
         code: "rejected",
       });

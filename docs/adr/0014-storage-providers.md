@@ -7,7 +7,7 @@ Task 1.12 (🔒). Implements `StorageProvider` (ADR 0007) in two adapter package
 
 ## Decisions
 
-- **Everything is private.** The interface has no public-URL method; every read is a short-lived signed URL (max 7 days, the SigV4 limit; applied to both adapters). Public media serving (CDN or public prefix) is deferred to server task 1.14, which owns the HTTP surface; it needs no interface change to start.
+- **Everything is private.** The interface has no public-URL method; every read is a short-lived signed URL (max 24 hours, enforced by both adapters; SigV4 would allow 7 days). Public media serving (CDN or public prefix) is deferred to server task 1.14, which owns the HTTP surface; it needs no interface change to start.
 - **Local disk** (`storage-local`, Node-only): URL = `base/<key>?expires=<s>&sig=<hex>`, `sig = HMAC-SHA256(secret, key + "\n" + expires)`. `getSigned(url)` is what the serving route (1.14) calls: it rejects foreign origin, malformed or traversal keys, expired, key-swapped, expiry-extended and bad signatures (constant-time compare, `node:crypto`) and returns `null`. Secret ≥ 32 chars, never in errors or logs. Content type is a sidecar file under a separate `type/` tree so user keys cannot collide with metadata. Objects live outside any web root.
 - **S3/R2/MinIO** (`storage-s3`): path-style, SigV4 via **`aws4fetch` 1.0.20** (new runtime dependency, justified here). ~2 KB, fetch/WebCrypto only, so it runs on Node, Bun, Workers and RN-adjacent edge; the AWS SDK v3 is orders of magnitude larger and Node-oriented. We use only `sign()` and send through an injectable `fetch`, which also makes the tests MinIO-free. `signedUrl` does a HEAD first so a missing key is `not_found`, matching the interface.
 - **Keys are generated, never user paths.** `isSafeKey` (core, pure) allows only `[A-Za-z0-9._-]` segments joined by `/`, no leading dot, no `..`, ≤512 chars; both adapters enforce it on every method. `newStorageKey(prefix, ext)` mints `prefix/<uuid>.<ext>`. The user's filename is metadata, never part of the key.
@@ -20,3 +20,10 @@ Task 1.12 (🔒). Implements `StorageProvider` (ADR 0007) in two adapter package
 - One new runtime dependency (`aws4fetch`), only in `storage-s3`; none in `core`.
 - Local-disk is single-node: fine for dev and self-host on one box; use S3-compatible for anything multi-instance.
 - Presigned S3 URLs cannot be revoked before expiry; keep TTLs short (download grants mint a fresh URL per request).
+
+## Obligations on callers (task 1.14)
+
+- The serving route must send `X-Content-Type-Options: nosniff` and `Content-Disposition: attachment`, and take the content type from `validateUpload`'s sniffed result, never from the client.
+- Upload endpoints must enforce size limits while streaming, before buffering; `validateUpload` only sees a body already in memory (and rejects a non-finite `maxBytes`).
+- `get` buffers the whole object in both adapters (the interface returns `Uint8Array`); large files should be served by redirecting to the signed URL, not through `get`.
+- Local `put` writes type then data via temp file + rename, so a partial write never exposes an object; concurrent overwrites of one key may pair a stale type with new data, which generated keys make unreachable in practice.

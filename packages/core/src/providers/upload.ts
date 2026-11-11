@@ -56,6 +56,8 @@ export function validateUpload(
     declaredType?: string;
   },
 ): { contentType: string; ext: string } {
+  if (!Number.isFinite(opts.maxBytes))
+    throw new ProviderError("upload", "rejected", "maxBytes must be finite");
   if (body.byteLength === 0 || body.byteLength > opts.maxBytes)
     throw new ProviderError("upload", "rejected", "size out of bounds");
   const sniffed = SIGNATURES.find((s) => s.test(body));
@@ -72,15 +74,14 @@ export function validateUpload(
 
 const SAFE_KEY = /^[A-Za-z0-9][A-Za-z0-9._-]*(\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/;
 
-/** @experimental Storage keys are generated, never user paths: no leading dot or `..` segments, no `\`, no empty segments. */
+/** @experimental Storage keys are generated, never user paths: segments start alphanumeric (so no `.`/`..`), no `\`, no empty segments. */
 export function isSafeKey(key: string): boolean {
-  return key.length <= 512 && SAFE_KEY.test(key) && !key.includes("..");
+  return key.length <= 512 && SAFE_KEY.test(key);
 }
 
 /** @experimental Generated key `<prefix>/<uuid>.<ext>`; `prefix` must itself be a safe key. */
 export function newStorageKey(prefix: string, ext: string): string {
-  const key = `${prefix}/${crypto.randomUUID()}.${ext}`;
-  if (!isSafeKey(key) || !/^[a-z0-9]+$/.test(ext))
+  if (!isSafeKey(prefix) || !/^[a-z0-9]+$/.test(ext))
     throw new ProviderError("upload", "rejected", "unsafe key");
-  return key;
+  return `${prefix}/${crypto.randomUUID()}.${ext}`;
 }
