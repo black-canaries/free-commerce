@@ -21,7 +21,7 @@ Canvases to create in canvas-agents (one per area), with links recorded in `docs
 
 ## Phase 0: Foundations
 
-- [ ] **0.0 👤 Name decision (settled for now: keep "Free-commerce").** Decision: keep the working name `Free-commerce` for development and make renaming cheap (task 0.2a). Name candidates were checked and none cleared GitHub, npm, domain and trademark together (see the ADR). Claude Code writes `docs/adr/0001-name-and-namespace.md` recording: the decision, the candidates checked and why they failed, the concern that "free" can read as "costs nothing" rather than freedom, and the **rename gate** (a final name confirmation before the first public npm publish in 5.8).
+- [x] **0.0 👤 Name decision (settled for now: keep "Free-commerce").** Decision: keep the working name `Free-commerce` for development and make renaming cheap (task 0.2a). Name candidates were checked and none cleared GitHub, npm, domain and trademark together (see the ADR). Claude Code writes `docs/adr/0001-name-and-namespace.md` recording: the decision, the candidates checked and why they failed, the concern that "free" can read as "costs nothing" rather than freedom, and the **rename gate** (a final name confirmation before the first public npm publish in 5.8).
   👤 Jon, not blocking: reserve what is cheap to reserve under the working name (npm org `free-commerce`, GitHub org, a domain) when convenient, and run a real trademark search before 5.8. Availability of these was not verified.
   *Accept:* ADR committed; `brand.json` values (see 0.2a) match the decision. Development proceeds without waiting on accounts.
 - [ ] **0.1 Claude Code setup and workflow.** Add `CLAUDE.md` (from the brief), configure hooks (typecheck and lint after edits, package tests and secret scanning before commit), set up MCP servers (canvas-agents, Postgres dev inspection), create `docs/adr/` with a template, and add the branch/PR conventions and a PR template that asks for: task ID, acceptance evidence, **net lines added and removed, justification for each new file or dependency, and what existing code was considered**, and the 🔒 review record.
@@ -40,7 +40,7 @@ Canvases to create in canvas-agents (one per area), with links recorded in `docs
 - [ ] **0.5 Governance and policies.** MIT `LICENSE`, `README`, `CONTRIBUTING` (DCO sign-off, the prime directive), `CODE_OF_CONDUCT`, `SECURITY`, issue and PR templates. Add `docs/versioning.md`: semver policy, `@public` vs `@experimental` exports, deprecation window, and the rule that migrations are per-module, forward-only and upgrade-tested. Add `docs/assets.md` recording licences for demo images, fonts and icons.
 - [ ] **0.6 Connect canvas-agents and set up design workspace.** Confirm the canvas-agents MCP server is available to Claude Code. Create the canvases listed above. Create `docs/design/README.md` linking each canvas and describing the design workflow.
   *Accept:* Claude Code can read from and write to the canvases via MCP; a test frame is created and deleted successfully.
-- [ ] **0.7 ⚑ Domain model.** Start from `domain-model-draft.md` in the project, refine it, resolve its open modelling questions with Jon, and commit `docs/domain-model.md`. It must cover entities and relationships, state machines (including resumable payment states and draft orders), the glossary, invariants, what is in v0.1, and what is "designed for, not built". Challenge every entity and field against the prime directive: cut what v0.1 doesn't need.
+- [x] **0.7 ⚑ Domain model.** Start from `domain-model-draft.md` in the project, refine it, resolve its open modelling questions with Jon, and commit `docs/domain-model.md`. It must cover entities and relationships, state machines (including resumable payment states and draft orders), the glossary, invariants, what is in v0.1, and what is "designed for, not built". Challenge every entity and field against the prime directive: cut what v0.1 doesn't need.
   *Accept:* Jon reviews and approves; every Phase 1 and 2 task refers to this doc rather than inventing entities.
 - [ ] **0.8 🔒 Schema conventions.** In `schema`: `Money` (minor units + currency, helpers for add/multiply/allocate with rounding), prefixed ID generator, timestamp helpers, pagination and error shapes (typed error codes).
   *Accept:* property-based tests for money (allocation never loses or invents a cent).
@@ -71,7 +71,7 @@ No UI in this phase, so no design gates. API design should still favour the scre
 - [ ] **1.4 Cart domain.** Create/get cart, add/update/remove line items (including customer-defined amounts and quantity units), totals calculation (subtotal, discount, shipping, tax, total) via pure functions. `requiresShipping` is derived from line delivery types; carts with no physical lines skip shipping.
 - [ ] **1.5 Customers and addresses.** Customer entity (including optional tax ID), guest vs registered. Addresses validated and formatted per country using a maintained dataset, not hand-written rules.
   *Accept:* addresses for a sample of countries (US, UK, DE, JP, BR) validate and format correctly; invalid postal codes are rejected.
-- [ ] **1.6 Orders.** Order entity with three independent statuses per the domain model (lifecycle `draft | open | completed | cancelled`; payment `awaiting → requires_action | pending → authorized → captured → partially_refunded → refunded`, plus `failed | voided`; fulfilment `unfulfilled → partially_fulfilled → fulfilled`) and transition rules as pure functions. Digital and `none` lines complete fulfilment automatically on capture. Order notes and customer messages are timeline events.
+- [ ] **1.6 Orders.** Order entity with three independent statuses per the domain model (lifecycle `draft | open | completed | cancelled`; payment `unpaid | requires_action | pending | paid | partially_refunded | refunded | failed` (auto-capture; see `docs/domain-model.md`); fulfilment `unfulfilled → partially_fulfilled → fulfilled`) and transition rules as pure functions. Digital and `none` lines complete fulfilment automatically on capture. Order notes and customer messages are timeline events.
 - [ ] **1.7 adapter-postgres.** Drizzle schema, SQL migrations per module, repository implementations, transactions.
   *Accept:* complete `adapter-testkit` suite passes on Postgres (Testcontainers or a CI service) and in-memory; an upgrade-migration test harness exists for later releases.
 - [ ] **1.8 ⚑ Repository interface review.** Check for leakage of Drizzle/SQL concepts. Sketch what a Convex adapter would need. Freeze the interface only after review.
@@ -111,7 +111,7 @@ Backend only, except the payment client flow in 2.3 (covered by the checkout des
   *Accept:* tests cover limit exhaustion, expiry, revocation on refund, guest access with and without a valid token, and asset replacement keeping existing grants valid.
 - [ ] **2.11 🔒 Minimal scheduler and sweepers.** A `tick()` entry point (driven by a cron trigger or Node interval) and a Postgres jobs table with leasing and retries, kept as small as possible; Phase 6 extends it for automations rather than replacing it. First jobs: reservation expiry cleanup, abandoned-checkout cleanup, and **payment reconciliation** (compare provider state with orders and repair missed or duplicated webhooks).
   *Accept:* two workers never run the same job concurrently; reconciliation repairs an order whose webhook was dropped; jobs are idempotent.
-- [ ] **2.12 🎨 Invoices, receipts and credit notes.**
+- [ ] **2.12 🎨 Invoices, receipts and credit notes.** *(v0.1 scope: HTML only; PDF rendering deferred.)*
   - **D:** In the Email Templates and Documents canvas, design the invoice, receipt and credit note, including tax lines, tax IDs and localisation.
   - **I:** Sequential, gap-free numbering per document type; invoice generated at payment capture; credit note per refund; rendered as HTML and PDF behind a small renderer interface; link in the order email and customer account; store settings for legal name, address and tax ID.
   *Accept:* Jon approves the design; numbers never skip or repeat under concurrency; a credit note never exceeds its invoice; totals and tax lines match the order exactly.
@@ -138,12 +138,12 @@ Backend only, except the payment client flow in 2.3 (covered by the checkout des
   - **D:** Design the demo store pages (home, collection, product, cart, checkout, confirmation, account, order lookup) in the Storefront UI Kit canvas from the kit components. Include one physical, one digital and one donation example product.
   - **I:** Build the storefront.
   *Accept:* a Playwright end-to-end test browses, adds to cart, checks out with Stripe test mode (including a 3D Secure test card) and sees the order in the admin API, for a physical product, a digital download (and downloads it) and a donation; pages match the frames; Lighthouse performance and accessibility budgets are met.
-- [ ] **3.7 `tanstack-start` binding + `demo-tanstack`.** Reuses the 3.6 designs; no new design gate unless the layout differs.
-- [ ] **3.8 🎨 `react-native` binding + `ui-native` + `demo-mobile` (Expo).**
+- [ ] **3.7 DEFERRED past v0.1: `tanstack-start` binding + `demo-tanstack`.** Reuses the 3.6 designs; no new design gate unless the layout differs.
+- [ ] **3.8 DEFERRED past v0.1: 🎨 `react-native` binding + `ui-native` + `demo-mobile` (Expo).**
   - **D:** Design the mobile storefront in canvas-agents: native navigation, product and cart screens, checkout, the deep-link return from hosted payment and authentication, offline cart states, downloads (open or share a file). Follow platform conventions; reuse the tokens.
   - **I:** Implement `ui-native` components and the Expo demo.
   *Accept:* Jon approves the design; secure storage, deep-link return and offline-tolerant cart work on iOS and Android simulators.
-- [ ] **3.9 Storefront tracking events.** A small standard event layer in the SDK and hooks (view item, view collection, add to cart, begin checkout, add payment info, purchase, and so on) with pluggable trackers (dataLayer, GA4, Meta Pixel). Nothing loads or fires until cookie consent allows it.
+- [ ] **3.9 DEFERRED past v0.1: Storefront tracking events.** A small standard event layer in the SDK and hooks (view item, view collection, add to cart, begin checkout, add payment info, purchase, and so on) with pluggable trackers (dataLayer, GA4, Meta Pixel). Nothing loads or fires until cookie consent allows it.
   *Accept:* a demo run produces the expected event sequence; with consent withheld, no tracker loads and no event is sent.
 
 ## Phase 4: Admin
@@ -160,7 +160,7 @@ Design the whole admin before implementing any of it, so navigation and patterns
 - [ ] **4.6 Settings (I).** Including API keys, webhooks, policies and invoice settings.
 - [ ] **4.7 Plugin slots (I).** Registered routes and widgets.
 - [ ] **4.8 Admin end-to-end tests.** Playwright tests for create product (each kind), fulfil order, refund, draft order, and role restrictions.
-- [ ] **4.9 CSV import and export.** Products (with variants and prices), customers and orders; validation with row-level error reports; large files processed in chunks. Importers from other platforms are a Phase 9 item.
+- [ ] **4.9 DEFERRED past v0.1: CSV import and export.** Products (with variants and prices), customers and orders; validation with row-level error reports; large files processed in chunks. Importers from other platforms are a Phase 9 item.
   *Accept:* a round trip (export, edit, import) leaves the catalog unchanged; a bad row reports a clear error without aborting valid rows.
 - [ ] **4.10 Dashboard metrics.** Aggregate queries for revenue, orders, average order value, conversion inputs and top products over a date range; simple SQL aggregates, no separate analytics store.
   *Accept:* metrics match a hand-computed fixture; queries stay fast on a seeded store with 100,000 orders.
