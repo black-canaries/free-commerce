@@ -49,7 +49,7 @@ Canvases to create in canvas-agents (one per area), with links recorded in `docs
   *Accept:* property-based tests for money (allocation never loses or invents a cent).
 - [ ] **0.9 Repository interfaces + in-memory adapter.** Define `ProductRepository`, `CartRepository`, `OrderRepository` (minimal), `transaction()`; implement an in-memory adapter; create `adapter-testkit` skeleton that runs against any adapter.
   *Accept:* testkit passes against the in-memory adapter.
-- [ ] **0.10 Provider interface conventions.** Define the pattern for external-service providers (payments, email, SMS, storage, search, auth, captcha): interface, fake implementation for tests, config schema, error mapping, and a conformance test helper.
+- [x] **0.10 Provider interface conventions.** Define the pattern for external-service providers (payments, email, SMS, storage, search, auth, captcha): interface, fake implementation for tests, config schema, error mapping, and a conformance test helper.
   *Accept:* one worked example (a fake `StorageProvider`) with conformance tests; documented in an ADR.
 - [ ] **0.11 Saga runner spike.** Typed step runner with compensation, retries with idempotency keys, step-level result recording, OpenTelemetry spans per step, and the ability to **pause on an external event (such as a payment webhook) and resume**. Demo with a fake `completeCheckout`.
   *Accept:* tests for success, failure at each step (compensations run in reverse), retry idempotency, and pause/resume including a timeout that compensates.
