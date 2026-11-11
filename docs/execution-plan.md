@@ -51,7 +51,7 @@ Canvases to create in canvas-agents (one per area), with links recorded in `docs
   *Accept:* testkit passes against the in-memory adapter.
 - [x] **0.10 Provider interface conventions.** Define the pattern for external-service providers (payments, email, SMS, storage, search, auth, captcha): interface, fake implementation for tests, config schema, error mapping, and a conformance test helper.
   *Accept:* one worked example (a fake `StorageProvider`) with conformance tests; documented in an ADR.
-- [ ] **0.11 Saga runner spike.** Typed step runner with compensation, retries with idempotency keys, step-level result recording, OpenTelemetry spans per step, and the ability to **pause on an external event (such as a payment webhook) and resume**. Demo with a fake `completeCheckout`.
+- [x] **0.11 Saga runner spike.** Typed step runner with compensation, retries with idempotency keys, step-level result recording, OpenTelemetry spans per step, and the ability to **pause on an external event (such as a payment webhook) and resume**. Demo with a fake `completeCheckout`.
   *Accept:* tests for success, failure at each step (compensations run in reverse), retry idempotency, and pause/resume including a timeout that compensates.
 - [x] **0.12 Flow graph schema spike.** `packages/flow`: node/edge schema, validator (reachability, single trigger, no dangling edges), draft/published versioning model. No UI yet.
   *Accept:* validator tests; a sample abandoned-cart graph validates.
