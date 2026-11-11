@@ -33,10 +33,29 @@ importers:
         specifier: 5.1.0
         version: 5.1.0(@types/node@26.6.6)(vite@8.3.7(@types/node@26.6.6)(jiti@2.7.0)(yaml@2.9.1))
 
+  packages/adapter-memory:
+    dependencies:
+      '@free-commerce/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@free-commerce/adapter-testkit':
+        specifier: workspace:*
+        version: link:../adapter-testkit
+
+  packages/adapter-testkit:
+    dependencies:
+      '@free-commerce/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/config: {}
 
   packages/core:
     dependencies:
+      '@free-commerce/schema':
+        specifier: workspace:*
+        version: link:../schema
       zod:
         specifier: 4.6.7
         version: 4.6.7
