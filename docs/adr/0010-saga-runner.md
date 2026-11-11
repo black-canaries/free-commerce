@@ -36,6 +36,8 @@ Deadline = `now() + timeoutMs` at pause, with `now` injected (default `Date.now`
 
 ## Known limits
 
+- A duplicate webhook delivered while the first is mid-advance can run the next step twice before the stale-rev guard fires on save. Steps must therefore be idempotent via their key (they already must be, for crash re-drive). The webhook handler maps the stale-revision error to a 2xx or a retry, never a 5xx loop.
+- `compensate` receives `result: undefined` for the step that failed; adapters resolve the real object by key.
 - Results must be structured-cloneable; JSON-serialisability (no `Date`/`bigint`) is a contract the in-memory fake does not enforce. Postgres adapters will, so the adapter-testkit should assert it.
 - `compensation_failed` is re-driven by calling `start` again (manual or sweeper); there is no automatic backoff.
 

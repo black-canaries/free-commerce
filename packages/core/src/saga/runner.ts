@@ -33,7 +33,7 @@ export interface StepContext<I> {
 
 interface StepBase<I> {
   name: string;
-  /** Undoes this step; receives its recorded result. Must be idempotent. */
+  /** Undoes this step; receives its recorded result, or `undefined` when this step itself failed (maybe ambiguously). Must be idempotent. */
   compensate?: (ctx: StepContext<I>, result: unknown) => Promise<void>;
   /** Extra attempts after the first, only for retryable `ProviderError`s. Default 0. */
   retries?: number;
@@ -85,6 +85,16 @@ export interface SagaRunnerDeps {
   /** Epoch milliseconds. */
   now?: () => number;
 }
+
+/** JSON with sorted keys: stores may reorder object keys, so compare inputs canonically. */
+const canonical = (v: unknown) =>
+  JSON.stringify(v, (_, x) =>
+    x && typeof x === "object" && !Array.isArray(x)
+      ? Object.fromEntries(
+          Object.entries(x).sort(([a], [b]) => (a < b ? -1 : 1)),
+        )
+      : x,
+  );
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -140,7 +150,7 @@ export function createSagaRunner({
     step: Step<I>,
     suffix = "",
   ): StepContext<I> => ({
-    input: run.input as I,
+    input: structuredClone(run.input) as I,
     results: Object.fromEntries(
       Object.entries(run.steps).map(([k, v]) => [k, structuredClone(v.result)]),
     ),
@@ -179,7 +189,9 @@ export function createSagaRunner({
       if (undone) await persist(run);
     }
     run.status = failures.length ? "compensation_failed" : "compensated";
-    if (failures.length) run.error = [run.error, ...failures].join("; ");
+    // Re-drives repeat old failures; keep each message once.
+    const fresh = failures.filter((f) => !run.error?.includes(f));
+    if (fresh.length) run.error = [run.error, ...fresh].join("; ");
     await persist(run);
     return run;
   }
@@ -283,7 +295,7 @@ export function createSagaRunner({
         await persist(fresh);
         return advance(saga, fresh);
       }
-      if (JSON.stringify(run.input) !== JSON.stringify(input))
+      if (canonical(run.input) !== canonical(input))
         throw new Error(
           `saga run ${runId} already exists with a different input`,
         );

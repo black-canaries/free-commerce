@@ -343,23 +343,58 @@ describe("runner mechanics", () => {
     ).rejects.toThrow("unique");
   });
 
-  it("steps cannot mutate recorded results", async () => {
-    const saga: Saga<null> = {
+  it("steps and compensators cannot mutate the recorded input or results", async () => {
+    const mutate = (o: unknown) => {
+      (o as { n: number }).n = 99;
+    };
+    const saga: Saga<{ n: number }> = {
       name: "s",
       steps: [
-        { name: "a", run: async () => ({ n: 1 }) },
         {
-          name: "b",
-          run: async (c) => {
-            (c.results.a as { n: number }).n = 99;
+          name: "a",
+          run: async () => ({ n: 1 }),
+          compensate: async (_, r) => mutate(r),
+        },
+        { name: "b", run: async (c) => mutate(c.results.a) },
+        { name: "c", run: async (c) => mutate(c.input) },
+        {
+          name: "d",
+          run: async () => {
+            throw new Error("boom");
           },
         },
       ],
     };
+    const store = createFakeSagaStore();
+    const run = await createSagaRunner({ store }).start(saga, "r", { n: 1 });
+    expect(run.status).toBe("compensated");
+    expect([run.input, run.steps.a?.result]).toEqual([{ n: 1 }, { n: 1 }]);
+  });
+
+  it("input comparison ignores key order; repeated re-drives keep one copy of each error", async () => {
     const runner = createSagaRunner({ store: createFakeSagaStore() });
-    expect((await runner.start(saga, "r", null)).steps.a?.result).toEqual({
-      n: 1,
-    });
+    const saga: Saga<{ a: number; b: number }> = {
+      name: "s",
+      steps: [
+        {
+          name: "a",
+          run: async () => 1,
+          compensate: async () => {
+            throw new Error("stuck");
+          },
+        },
+        {
+          name: "b",
+          run: async () => {
+            throw new Error("boom");
+          },
+        },
+      ],
+    };
+    await runner.start(saga, "r", { a: 1, b: 2 });
+    await runner.start(saga, "r", { b: 2, a: 1 });
+    const run = await runner.start(saga, "r", { b: 2, a: 1 });
+    expect(run.error?.match(/stuck/g)).toHaveLength(1);
   });
 
   it("the store rejects a stale write", async () => {
