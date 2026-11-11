@@ -38,6 +38,15 @@ describe("allocate", () => {
     ).toEqual([34, 33, 33]);
   });
 
+  it("rejects non-integer amounts with a clear error and keeps currency", () => {
+    for (const amount of [Number.NaN, 1.5])
+      expect(() => allocate({ amount, currency: "USD" }, [1])).toThrow(
+        /safe integer/,
+      );
+    const parts = allocate({ amount: 10, currency: "EUR" }, [1, 2]);
+    expect(parts.every((p) => p.currency === "EUR")).toBe(true);
+  });
+
   it("rejects empty, negative, fractional or all-zero ratios", () => {
     const m = { amount: 1, currency: "USD" };
     for (const bad of [[], [-1, 2], [0.5], [0, 0]])
@@ -55,6 +64,21 @@ describe("add / multiply", () => {
         expect(add(x, y).amount).toBe(a + b);
       }),
     );
+  });
+
+  it("multiply rejects non-integer amounts; -0 is normalised", () => {
+    expect(() => multiply({ amount: Number.NaN, currency: "USD" }, 2)).toThrow(
+      /safe integer/,
+    );
+    const z = { amount: 0, currency: "USD" };
+    const neg = add({ amount: -0, currency: "USD" }, z);
+    expect(Object.is(neg.amount, 0)).toBe(true);
+    expect(
+      Object.is(multiply({ amount: -1, currency: "USD" }, 1, 4).amount, 0),
+    ).toBe(true);
+    expect(
+      Object.is(Money.parse({ amount: -0, currency: "USD" }).amount, 0),
+    ).toBe(true);
   });
 
   it("rejects mixed currencies", () => {

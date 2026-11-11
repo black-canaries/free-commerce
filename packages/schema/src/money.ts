@@ -6,7 +6,11 @@ export type CurrencyCode = z.infer<typeof CurrencyCode>;
 
 /** Integer minor units + currency. Never a float. */
 export const Money = z.object({
-  amount: z.number().int(),
+  // `+ 0` turns -0 into 0.
+  amount: z
+    .number()
+    .int()
+    .transform((n) => n + 0),
   currency: CurrencyCode,
 });
 export type Money = z.infer<typeof Money>;
@@ -55,7 +59,13 @@ export const minorUnitExponent = (currency: CurrencyCode): number =>
 const safe = (amount: number, currency: CurrencyCode): Money => {
   if (!Number.isSafeInteger(amount))
     throw new RangeError("Money amount out of safe integer range");
-  return { amount, currency };
+  return { amount: amount + 0, currency }; // `+ 0` turns -0 into 0
+};
+
+const wholeAmount = (m: Money): bigint => {
+  if (!Number.isSafeInteger(m.amount))
+    throw new RangeError("Money amount must be a safe integer");
+  return BigInt(m.amount);
 };
 
 const sameCurrency = (a: Money, b: Money): void => {
@@ -86,12 +96,11 @@ export const multiply = (
     throw new RangeError(
       "Factor must be an integer numerator over a positive integer denominator",
     );
-  const n = BigInt(m.amount) * BigInt(numerator);
+  const n = wholeAmount(m) * BigInt(numerator);
   const d = BigInt(denominator);
   const abs = n < 0n ? -n : n;
   const q = Number((2n * abs + d) / (2n * d));
-  // `|| 0` avoids returning -0 when a negative amount rounds to zero.
-  return safe((n < 0n ? -q : q) || 0, m.currency);
+  return safe(n < 0n ? -q : q, m.currency);
 };
 
 /**
@@ -110,7 +119,7 @@ export const allocate = (m: Money, ratios: readonly number[]): Money[] => {
   }
   const sum = ratios.reduce((s, r) => s + BigInt(r), 0n);
   if (sum === 0n) throw new RangeError("Ratios must not all be zero");
-  const total = BigInt(Math.abs(m.amount));
+  const total = wholeAmount({ ...m, amount: Math.abs(m.amount) });
   const shares = ratios.map((r) => ({
     floor: (total * BigInt(r)) / sum,
     rem: (total * BigInt(r)) % sum,
@@ -121,8 +130,7 @@ export const allocate = (m: Money, ratios: readonly number[]): Money[] => {
     .sort((a, b) => (a.rem === b.rem ? a.i - b.i : a.rem > b.rem ? -1 : 1));
   const extra = new Set(order.slice(0, leftover).map((o) => o.i));
   const sign = m.amount < 0 ? -1 : 1;
-  // `|| 0` avoids returning -0 for zero shares of a negative amount.
   return shares.map((p, i) =>
-    safe(sign * (Number(p.floor) + (extra.has(i) ? 1 : 0)) || 0, m.currency),
+    safe(sign * (Number(p.floor) + (extra.has(i) ? 1 : 0)), m.currency),
   );
 };

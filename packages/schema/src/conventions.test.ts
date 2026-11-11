@@ -21,7 +21,7 @@ describe("newId", () => {
   });
 
   it("rejects bad timestamps", () => {
-    for (const bad of [1.5, -1])
+    for (const bad of [1.5, -1, 2 ** 48])
       expect(() => newId("prod", bad)).toThrow(RangeError);
   });
 

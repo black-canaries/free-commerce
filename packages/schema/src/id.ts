@@ -22,8 +22,8 @@ export const idSchema = (prefix: string) => {
  */
 export const newId = (prefix: string, now: number = Date.now()): string => {
   assertPrefix(prefix);
-  if (!Number.isSafeInteger(now) || now < 0)
-    throw new RangeError("now must be a non-negative integer (ms)");
+  if (!Number.isSafeInteger(now) || now < 0 || now >= 2 ** 48)
+    throw new RangeError("now must be an integer ms timestamp in [0, 2^48)");
   if (typeof globalThis.crypto?.getRandomValues !== "function")
     throw new Error(
       "crypto.getRandomValues is unavailable; install a polyfill (see newId docs)",
