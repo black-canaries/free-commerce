@@ -7,16 +7,16 @@ Checkout is a code-defined, resumable saga with compensation (brief rule 6). `pa
 
 ## Step model
 
-A `Saga<I>` is a named, ordered list of steps. A step is either an **action** (`run(ctx)`, optional `compensate(ctx, result)`, optional `retries`) or a **wait** (`waitFor: {event, timeoutMs}`). `ctx` carries the saga input, the recorded results of earlier steps by name, and an idempotency `key`. Results must be JSON-serialisable. Steps are straight-line; branching belongs in the step body. A failed step is not itself compensated (it is assumed atomic or idempotent via its key); every earlier *completed* step is, in reverse order.
+A `Saga<I>` is a named, ordered list of steps. A step is either an **action** (`run(ctx)`, optional `compensate(ctx, result)`, optional `retries`) or a **wait** (`waitFor: {event, timeoutMs}`). `ctx` carries the saga input, the recorded results of earlier steps by name, and an idempotency `key`. Results must be JSON-serialisable. Steps are straight-line; branching belongs in the step body. Run id and step names must be non-empty, unique and contain no `:` (they build idempotency keys); `start` rejects violations. On failure every completed step is compensated in reverse, **and the failed step's own `compensate` runs too, with `result: undefined`**: a failure can be ambiguous (a timeout after the charge succeeded), and undo is keyed and idempotent. Compensators must therefore tolerate an absent result and resolve by key. Results are deep-cloned before being handed to steps, so they cannot mutate the record.
 
 ## Persistence and resume
 
 The whole run is one JSON record (`SagaRun`: status, per-step result and `compensated` flag, `waiting`, `error`) saved through an injected `SagaStore` after each step. Nothing lives in memory between calls, so a run survives restarts:
 
-- `start(saga, runId, input)` is idempotent: a new id creates the run; an existing `running`/`compensating` run is re-driven (crash recovery); terminal or paused runs are returned unchanged. Recorded steps are never re-executed.
-- `resume(saga, runId, event, payload)` is called by the verified, idempotent webhook handler. It records the payload as the wait step's result and continues. Duplicate, wrong-event or already-finished deliveries are no-ops.
+- `start(saga, runId, input)` is idempotent: a new id creates the run; an existing `running` run is re-driven (crash recovery); `compensating` and `compensation_failed` runs retry their unflagged compensations (the repair path); completed, compensated or paused runs are returned unchanged. Recorded steps are never re-executed. An existing id with a different input (compared as JSON) or a different saga name throws; `resume`/`expire` also check the saga name.
+- `resume(saga, runId, event, payload)` is called by the verified, idempotent webhook handler. It records the payload as the wait step's result and continues. If the process died after that record, the provider's retry finds a `running` run with the wait step recorded and re-drives it. Duplicate, wrong-event or already-finished deliveries are no-ops.
 - `expire(saga, runId)` is called by a sweeper (the reconciliation job / scheduler tick); it compensates a paused run past its deadline.
-- Optimistic concurrency: every save bumps `rev`; stores must reject a save unless `rev === stored.rev + 1`. Two racing resumes therefore cannot both proceed past a save; the loser throws and the caller retries (and then sees the no-op path).
+- Optimistic concurrency: every save bumps `rev`; stores must reject a save unless `rev === stored.rev + 1`. Two racing resumes therefore cannot both proceed past a save; the loser throws a stale-revision error, which the webhook handler must turn into a retry (it then sees the no-op path). A store failure is never treated as a step or compensation failure: it propagates, the run stays `running`/`compensating`, and a later `start`/`resume` re-drives it (re-executing the unrecorded step with the same key).
 
 ## Idempotency
 
@@ -33,6 +33,11 @@ Deadline = `now() + timeoutMs` at pause, with `now` injected (default `Date.now`
 ## Tracer
 
 `Tracer`/`Span` are structural subsets of OpenTelemetry's API (`startSpan(name, {attributes})`, `end`, `setStatus({code})`, `recordException`), so an OTel tracer is injectable with no adapter. `@opentelemetry/api` is **not** a dependency of `core`; default is a no-op. One span per step execution (`saga.step`) and per compensation (`saga.compensate`) with `saga.run` and `saga.step` attributes; retries happen inside one span. Wait steps have no span.
+
+## Known limits
+
+- Results must be structured-cloneable; JSON-serialisability (no `Date`/`bigint`) is a contract the in-memory fake does not enforce. Postgres adapters will, so the adapter-testkit should assert it.
+- `compensation_failed` is re-driven by calling `start` again (manual or sweeper); there is no automatic backoff.
 
 ## Consequences
 

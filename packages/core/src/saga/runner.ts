@@ -142,22 +142,26 @@ export function createSagaRunner({
   ): StepContext<I> => ({
     input: run.input as I,
     results: Object.fromEntries(
-      Object.entries(run.steps).map(([k, v]) => [k, v.result]),
+      Object.entries(run.steps).map(([k, v]) => [k, structuredClone(v.result)]),
     ),
     key: `${run.id}:${step.name}${suffix}`,
   });
 
+  /** Returns true when it undid the step (caller persists the flag). */
   async function compensateStep<I>(run: SagaRun, step: Step<I>) {
     const done = run.steps[step.name];
-    if (!done || done.compensated || !step.compensate) return;
+    if (!done || done.compensated || !step.compensate) return false;
     const { compensate } = step;
     await traced("saga.compensate", run, step.name, () =>
       withRetries(step.retries ?? 0, () =>
-        compensate(context(run, step, ":compensate"), done.result),
+        compensate(
+          context(run, step, ":compensate"),
+          structuredClone(done.result),
+        ),
       ),
     );
     done.compensated = true;
-    await persist(run);
+    return true;
   }
 
   async function compensate<I>(saga: Saga<I>, run: SagaRun) {
@@ -165,11 +169,14 @@ export function createSagaRunner({
     await persist(run);
     const failures: string[] = [];
     for (const step of [...saga.steps].reverse()) {
+      let undone = false;
       try {
-        await compensateStep(run, step);
+        undone = await compensateStep(run, step);
       } catch (e) {
         failures.push(`compensate ${step.name}: ${message(e)}`);
       }
+      // Outside the try: a store outage must not be reported as a failed undo.
+      if (undone) await persist(run);
     }
     run.status = failures.length ? "compensation_failed" : "compensated";
     if (failures.length) run.error = [run.error, ...failures].join("; ");
@@ -177,13 +184,11 @@ export function createSagaRunner({
     return run;
   }
 
-  async function execute<I>(run: SagaRun, step: Step<I> & { run: unknown }) {
+  function execute<I>(run: SagaRun, step: Step<I> & { run: unknown }) {
     const { run: fn } = step as Extract<Step<I>, { run: unknown }>;
-    const result = await traced("saga.step", run, step.name, () =>
+    return traced("saga.step", run, step.name, () =>
       withRetries(step.retries ?? 0, () => fn(context(run, step))),
     );
-    run.steps[step.name] = { result, compensated: false };
-    await persist(run);
   }
 
   async function advance<I>(saga: Saga<I>, run: SagaRun) {
@@ -196,12 +201,20 @@ export function createSagaRunner({
         await persist(run);
         return run;
       }
+      let result: unknown;
       try {
-        await execute(run, step);
+        result = await execute(run, step);
       } catch (e) {
         run.error = `${step.name}: ${message(e)}`;
+        // The failure may be ambiguous (e.g. a timeout after the charge went
+        // through), so the step's own undo runs too, with no result.
+        run.steps[step.name] = { result: undefined, compensated: false };
         return compensate(saga, run);
       }
+      // Outside the try: a store failure is not a step failure; the run stays
+      // `running` and a later start/resume re-executes the step (same key).
+      run.steps[step.name] = { result, compensated: false };
+      await persist(run);
     }
     run.status = "completed";
     await persist(run);
@@ -218,11 +231,37 @@ export function createSagaRunner({
     return compensate(saga, run);
   }
 
-  async function loadOrThrow(runId: string) {
+  async function load<I>(saga: Saga<I>, runId: string) {
     const run = await store.load(runId);
+    if (run && run.saga !== saga.name)
+      throw new Error(
+        `saga run ${runId} belongs to ${run.saga}, not ${saga.name}`,
+      );
+    return run;
+  }
+
+  async function loadOrThrow<I>(saga: Saga<I>, runId: string) {
+    const run = await load(saga, runId);
     if (!run) throw new Error(`saga run not found: ${runId}`);
     return run;
   }
+
+  /** Names feed idempotency keys (`run:step:compensate`), so they must be unique and colon-free. */
+  function validate<I>(saga: Saga<I>, runId: string) {
+    const names = [runId, ...saga.steps.map((s) => s.name)];
+    if (
+      names.some((n) => !n || n.includes(":")) ||
+      new Set(names.slice(1)).size !== saga.steps.length
+    )
+      throw new Error(
+        `saga ${saga.name}: run id and step names must be non-empty, unique and contain no ":"`,
+      );
+  }
+
+  const recorded = <I>(saga: Saga<I>, run: SagaRun, event: string) =>
+    saga.steps.some(
+      (s) => "waitFor" in s && s.waitFor.event === event && run.steps[s.name],
+    );
 
   return {
     /**
@@ -230,7 +269,8 @@ export function createSagaRunner({
      * recorded steps are never re-executed, so this is the idempotent entry point.
      */
     async start<I>(saga: Saga<I>, runId: string, input: I): Promise<SagaRun> {
-      const run = await store.load(runId);
+      validate(saga, runId);
+      const run = await load(saga, runId);
       if (!run) {
         const fresh: SagaRun = {
           id: runId,
@@ -243,8 +283,14 @@ export function createSagaRunner({
         await persist(fresh);
         return advance(saga, fresh);
       }
+      if (JSON.stringify(run.input) !== JSON.stringify(input))
+        throw new Error(
+          `saga run ${runId} already exists with a different input`,
+        );
       if (run.status === "running") return advance(saga, run);
-      if (run.status === "compensating") return compensate(saga, run);
+      // Also retries `compensation_failed`: undone steps are flagged and skipped.
+      if (run.status === "compensating" || run.status === "compensation_failed")
+        return compensate(saga, run);
       return run;
     },
 
@@ -259,7 +305,10 @@ export function createSagaRunner({
       event: string,
       payload: unknown,
     ): Promise<SagaRun> {
-      const run = await loadOrThrow(runId);
+      const run = await loadOrThrow(saga, runId);
+      // Crash after the event was recorded: a webhook retry re-drives the run.
+      if (run.status === "running" && recorded(saga, run, event))
+        return advance(saga, run);
       const waiting = run.waiting;
       if (run.status !== "paused" || !waiting || waiting.event !== event)
         return run;
@@ -273,7 +322,7 @@ export function createSagaRunner({
 
     /** Compensates a paused run whose deadline has passed; call from a sweeper. Otherwise a no-op. */
     async expire<I>(saga: Saga<I>, runId: string): Promise<SagaRun> {
-      const run = await loadOrThrow(runId);
+      const run = await loadOrThrow(saga, runId);
       const waiting = run.waiting;
       if (run.status !== "paused" || !waiting || now() < waiting.deadline)
         return run;

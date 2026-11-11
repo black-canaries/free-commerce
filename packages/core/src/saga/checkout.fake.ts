@@ -5,12 +5,15 @@ export interface CheckoutInput {
   amount: number;
 }
 
-/** Narrow service ports for the demo; every call takes the step's idempotency key. */
+/**
+ * Narrow service ports for the demo; every call takes the step's idempotency key.
+ * Undo calls get no id when the forward step failed ambiguously: resolve by key.
+ */
 export interface CheckoutDeps {
   reserveStock(key: string, cartId: string): Promise<string>;
-  releaseStock(key: string, reservationId: string): Promise<void>;
+  releaseStock(key: string, reservationId?: string): Promise<void>;
   createPayment(key: string, amount: number): Promise<string>;
-  cancelPayment(key: string, paymentId: string): Promise<void>;
+  cancelPayment(key: string, paymentId?: string): Promise<void>;
   confirmOrder(key: string, cartId: string, paymentId: string): Promise<string>;
 }
 
@@ -22,13 +25,13 @@ export function completeCheckout(d: CheckoutDeps): Saga<CheckoutInput> {
       {
         name: "reserve-stock",
         run: (c) => d.reserveStock(c.key, c.input.cartId),
-        compensate: (c, r) => d.releaseStock(c.key, r as string),
+        compensate: (c, r) => d.releaseStock(c.key, r as string | undefined),
       },
       {
         name: "create-payment",
         retries: 2,
         run: (c) => d.createPayment(c.key, c.input.amount),
-        compensate: (c, r) => d.cancelPayment(c.key, r as string),
+        compensate: (c, r) => d.cancelPayment(c.key, r as string | undefined),
       },
       {
         name: "await-payment",
