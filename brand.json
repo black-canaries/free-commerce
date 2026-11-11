@@ -1,0 +1,10 @@
+{
+  "name": "Free-commerce",
+  "slug": "free-commerce",
+  "scope": "@free-commerce",
+  "cli": "free-commerce",
+  "envPrefix": "FREE_COMMERCE",
+  "domain": "",
+  "repo": "",
+  "previous": []
+}

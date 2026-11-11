@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repo state
 
-Pre-scaffold: only `docs/` exists (no code, no `package.json`, empty `README.md`). Build/lint/test commands do not exist yet; they arrive with task 0.2 (monorepo scaffold) and 0.4 (CI). Planned toolchain: pnpm workspaces + Turborepo, TypeScript strict, Vitest, Playwright, Biome, knip, Changesets. Intended single-test usage is Vitest per package (`turbo run test --filter=<pkg>`); update this section once the scaffold lands.
+Scaffold landed (tasks 0.2, 0.2a, 0.5; 0.1/0.3/0.4 partial, see plan). pnpm workspaces + Turborepo, TypeScript strict, Biome, Vitest, knip, jscpd, Changesets. Commands: `pnpm build|typecheck|lint|test|knip|dupes`; single package: `turbo run test --filter=@free-commerce/<pkg>`; rename: `pnpm rename --to <name> [--scope @x] [--write]`. Playwright arrives with 4.8.
 
 Source of truth for work: [docs/claude-code-brief.md](docs/claude-code-brief.md) (decisions, scope, rules, workflow) and [docs/execution-plan.md](docs/execution-plan.md) (ordered tasks with acceptance criteria). Read both before starting any task. The brief mentions `architecture-and-roadmap.md` and `domain-model-draft.md`, which are not in the repo yet; `docs/domain-model.md` is produced by task 0.7.
 
