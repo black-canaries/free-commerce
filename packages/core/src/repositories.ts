@@ -1,4 +1,5 @@
 import type { PageQuery, Product } from "@free-commerce/schema";
+import type { Outbox } from "./events/events";
 
 /** @experimental Placeholder entity shape; Phase 1 replaces it with the real Zod-derived types. */
 export type Entity = { id: string };
@@ -28,6 +29,8 @@ export interface Repositories {
   products: ProductRepository;
   carts: CartRepository;
   orders: OrderRepository;
+  /** Written in the same transaction as the domain change. */
+  outbox: Outbox;
 }
 
 /**

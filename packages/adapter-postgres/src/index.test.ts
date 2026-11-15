@@ -1,4 +1,7 @@
-import { repositoryConformance } from "@free-commerce/adapter-testkit";
+import {
+  outboxConformance,
+  repositoryConformance,
+} from "@free-commerce/adapter-testkit";
 import postgres from "postgres";
 import { afterAll, describe, it } from "vitest";
 import { createPostgresDatabase } from "./index";
@@ -15,9 +18,11 @@ if (!url) {
 } else {
   const client = postgres(url, { onnotice: () => {} });
   afterAll(() => client.end());
-  repositoryConformance("postgres", async () => {
+  const make = async () => {
     await migrate(client);
-    await client`truncate products, carts, orders`;
+    await client`truncate products, carts, orders, outbox`;
     return createPostgresDatabase(client);
-  });
+  };
+  repositoryConformance("postgres", make);
+  outboxConformance("postgres", make);
 }

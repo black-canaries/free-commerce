@@ -1,8 +1,12 @@
 import {
+  createEventBus,
   createProduct,
   type Database,
+  type DomainEvent,
   type Entity,
+  idempotent,
   type Repository,
+  relayOutbox,
 } from "@free-commerce/core";
 import { describe, expect, it } from "vitest";
 
@@ -109,6 +113,115 @@ export function repositoryConformance(
         });
       await Promise.all(Array.from({ length: 10 }, bump));
       expect(await db.orders.get("n")).toEqual(counter(10));
+    });
+  });
+}
+
+const evt = (id: string): DomainEvent => ({
+  id,
+  type: "t",
+  occurredAt: "2026-01-01T00:00:00.000Z",
+  payload: { id },
+});
+
+/** @experimental Outbox and relay behaviour every `Database` adapter must pass. */
+export function outboxConformance(
+  name: string,
+  make: () => Database | Promise<Database>,
+): void {
+  describe(`Outbox conformance: ${name}`, () => {
+    const ids = async (db: Database) =>
+      (await db.outbox.pending(10)).map((e) => e.id);
+
+    it("keeps insertion order, ignores duplicate ids, honours the limit", async () => {
+      const db = await make();
+      for (const id of ["b", "a", "c", "a"]) await db.outbox.add(evt(id));
+      expect(await ids(db)).toEqual(["b", "a", "c"]);
+      expect(await db.outbox.pending(2)).toEqual([evt("b"), evt("a")]);
+    });
+
+    it("markDelivered removes from pending and is idempotent", async () => {
+      const db = await make();
+      await db.outbox.add(evt("a"));
+      await db.outbox.add(evt("b"));
+      await db.outbox.markDelivered("a");
+      await db.outbox.markDelivered("a");
+      await db.outbox.add(evt("a")); // re-adding a delivered id stays delivered
+      expect(await ids(db)).toEqual(["b"]);
+    });
+
+    it("commits events with the domain change and drops them on rollback", async () => {
+      const db = await make();
+      await db.transaction(async (tx) => {
+        await tx.orders.save({ id: "o1" });
+        await tx.outbox.add(evt("kept"));
+      });
+      await expect(
+        db.transaction(async (tx) => {
+          await tx.orders.save({ id: "o2" });
+          await tx.outbox.add(evt("lost"));
+          throw new Error("boom");
+        }),
+      ).rejects.toThrow("boom");
+      expect(await ids(db)).toEqual(["kept"]);
+      expect(await db.orders.get("o2")).toBeNull();
+    });
+
+    it("relay: a failing handler stops the batch, earlier events stay delivered, retry resumes", async () => {
+      const db = await make();
+      for (const id of ["1", "2", "3"]) await db.outbox.add(evt(id));
+      const got: string[] = [];
+      let broken = true;
+      const bus = createEventBus();
+      bus.subscribe("t", async (e) => {
+        if (e.id === "2" && broken) throw new Error("crash");
+        got.push(e.id);
+      });
+      await expect(relayOutbox(db.outbox, bus)).rejects.toThrow("crash");
+      expect(await ids(db)).toEqual(["2", "3"]);
+      broken = false;
+      expect(await relayOutbox(db.outbox, bus)).toBe(2);
+      expect(got).toEqual(["1", "2", "3"]);
+      expect(await relayOutbox(db.outbox, bus)).toBe(0);
+    });
+
+    it("relay: a crash after publish but before marking redelivers; idempotent subscribers apply once", async () => {
+      const db = await make();
+      await db.outbox.add(evt("1"));
+      const effects: string[] = [];
+      const seen = new Set<string>();
+      const bus = createEventBus();
+      bus.subscribe(
+        "t",
+        idempotent(seen, async (e) => void effects.push(e.id)),
+      );
+      let crash = true;
+      const flaky = {
+        ...db.outbox,
+        async markDelivered(id: string) {
+          if (crash) {
+            crash = false;
+            throw new Error("died before marking");
+          }
+          return db.outbox.markDelivered(id);
+        },
+      };
+      await expect(relayOutbox(flaky, bus)).rejects.toThrow("died");
+      expect(await ids(db)).toEqual(["1"]);
+      await relayOutbox(flaky, bus);
+      expect(await ids(db)).toEqual([]);
+      expect(effects).toEqual(["1"]);
+    });
+
+    it("bus runs every handler even when one fails", async () => {
+      const bus = createEventBus();
+      const ran: string[] = [];
+      bus.subscribe("t", async () => {
+        throw new Error("first");
+      });
+      bus.subscribe("t", async () => void ran.push("second"));
+      await expect(bus.publish(evt("1"))).rejects.toThrow("first");
+      expect(ran).toEqual(["second"]);
     });
   });
 }

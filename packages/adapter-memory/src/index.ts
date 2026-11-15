@@ -1,20 +1,24 @@
 import type {
   Database,
+  DomainEvent,
   Entity,
+  Outbox,
   Repositories,
   Repository,
 } from "@free-commerce/core";
 
+type Docs = Omit<Repositories, "outbox">;
 type State = {
-  [K in keyof Repositories]: Repositories[K] extends Repository<infer T>
+  [K in keyof Docs]: Docs[K] extends Repository<infer T>
     ? Map<string, T>
     : never;
-};
+} & { outbox: Map<string, { event: DomainEvent; delivered: boolean }> };
 
 const emptyState = (): State => ({
   products: new Map(),
   carts: new Map(),
   orders: new Map(),
+  outbox: new Map(),
 });
 
 const repository = <T extends Entity>(
@@ -39,10 +43,29 @@ const repository = <T extends Entity>(
   },
 });
 
+/** Map insertion order is the outbox order. */
+const outbox = (rows: () => State["outbox"]): Outbox => ({
+  async add(event) {
+    if (!rows().has(event.id))
+      rows().set(event.id, { event: structuredClone(event), delivered: false });
+  },
+  async pending(limit) {
+    return [...rows().values()]
+      .filter((r) => !r.delivered)
+      .slice(0, limit)
+      .map((r) => structuredClone(r.event));
+  },
+  async markDelivered(id) {
+    const row = rows().get(id);
+    if (row) row.delivered = true;
+  },
+});
+
 const bind = (state: () => State): Repositories => ({
   products: repository(() => state().products),
   carts: repository(() => state().carts),
   orders: repository(() => state().orders),
+  outbox: outbox(() => state().outbox),
 });
 
 /**
@@ -60,6 +83,7 @@ export function createMemoryDatabase(): Database {
           products: new Map(state.products),
           carts: new Map(state.carts),
           orders: new Map(state.orders),
+          outbox: new Map([...state.outbox].map(([k, v]) => [k, { ...v }])),
         };
         const result = await fn(bind(() => copy));
         state = copy;
