@@ -16,6 +16,7 @@
     "@free-commerce/schema": "workspace:*"
   },
   "devDependencies": {
-    "@free-commerce/adapter-testkit": "workspace:*"
+    "@free-commerce/adapter-testkit": "workspace:*",
+    "fast-check": "^4.10.2"
   }
 }
