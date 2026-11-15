@@ -62,6 +62,18 @@ describe("api keys", () => {
     expect(await verifyApiKey(store, instant.secret, 10)).not.toBeNull();
   });
 
+  it("rotation refuses an expired key", async () => {
+    const store = createFakeApiKeyStore();
+    const { key } = await createApiKey(
+      store,
+      { ...input, expiresAt: new Date(1000).toISOString() },
+      0,
+    );
+    await expect(rotateApiKey(store, key.id, 0, 1000)).rejects.toThrow(
+      ApiKeyError,
+    );
+  });
+
   it("publishable keys cannot hold admin scopes; scopes are required", async () => {
     const store = createFakeApiKeyStore();
     await expect(

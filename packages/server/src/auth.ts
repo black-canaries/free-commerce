@@ -10,11 +10,12 @@ import type { Context, Hono, MiddlewareHandler } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { z } from "zod";
 import { HttpError, parse } from "./errors.js";
-import type { AppEnv, AuthState } from "./types.js";
+import type { AppEnv, AuthState, RateLimitStore } from "./types.js";
 
 export interface AuthDeps {
   auth: AuthProvider;
   apiKeys: ApiKeyStore;
+  rateLimit: RateLimitStore;
   /** Cookie attributes; storefronts on another origin need `sameSite: "None"` (requires `secure`). */
   cookies?: { sameSite: "Lax" | "None" | "Strict"; secure: boolean };
   /** Browser origins allowed by CORS and, for cookie-authenticated admin writes, the CSRF check. */
@@ -23,6 +24,8 @@ export interface AuthDeps {
 }
 
 const COOKIE = { admin: "fc_admin", customer: "fc_customer" } as const;
+const EMAIL_LIMIT = 10;
+const EMAIL_WINDOW_MS = 15 * 60_000;
 const READ = new Set(["GET", "HEAD", "OPTIONS"]);
 
 const bearer = (c: Context): string | undefined => {
@@ -56,7 +59,8 @@ export const authenticate =
     const fromHeader = bearer(c);
     const token = fromHeader ?? getCookie(c, COOKIE[realm]);
     const user = token && (await deps.auth.authenticate(realm, token));
-    if (token && !user)
+    // On login/register/logout a stale credential is as good as none, or it would lock the user out.
+    if (token && !user && !isAuthRoute(c.req.path))
       throw new HttpError("unauthenticated", "Invalid or expired session");
     if (user && realm === "admin")
       state.admin = { userId: user.userId, viaCookie: !fromHeader };
@@ -156,7 +160,28 @@ export const mountAuthRoutes = (
     return c.json({ userId, expiresAt }, status);
   };
 
+  /** Per-account throttle on top of the per-client one, which a botnet or spoofed headers can sidestep. */
+  const throttle = async (email: string) => {
+    const { count, resetAt } = await deps.rateLimit.hit(
+      `email:${realm}:${email.toLowerCase()}`,
+      EMAIL_WINDOW_MS,
+    );
+    if (count > EMAIL_LIMIT)
+      throw new HttpError(
+        "rate_limited",
+        "Too many attempts for this account",
+        {
+          headers: {
+            "retry-after": String(
+              Math.max(1, Math.ceil((resetAt - deps.now()) / 1000)),
+            ),
+          },
+        },
+      );
+  };
+
   const login = async (c: Context<AppEnv>, body: z.infer<typeof Login>) => {
+    await throttle(body.email);
     const session = await deps.auth.signIn(realm, body);
     if (!session)
       throw new HttpError("unauthenticated", "Invalid email or password");
@@ -170,6 +195,7 @@ export const mountAuthRoutes = (
   if (realm === "customer")
     app.post(`${base}/register`, async (c) => {
       const body = parse(Register, await c.req.json().catch(() => undefined));
+      await throttle(body.email);
       try {
         await deps.auth.signUp(realm, body);
       } catch {

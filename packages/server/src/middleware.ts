@@ -47,17 +47,28 @@ export const requestContext =
     });
   };
 
-/** Fixed-window limit per client (first `x-forwarded-for` hop: the deploy's proxy must set it). */
+/**
+ * The client address as seen by the outermost of `trustedProxies` proxies: the entry that many hops from the
+ * right of `x-forwarded-for`. Earlier entries are client-supplied and ignored. Without the header: "unknown".
+ */
+const clientIp = (header: string | undefined, trustedProxies: number) => {
+  const hops = header?.split(",").map((h) => h.trim()) ?? [];
+  return hops[Math.max(0, hops.length - trustedProxies)] || "unknown";
+};
+
+/** Fixed-window limit per client (see `clientIp`; `trustedProxies` must match the deployment). */
 export const rateLimit =
   (
     store: RateLimitStore,
-    opts: { limit: number; windowMs: number },
+    opts: { limit: number; windowMs: number; trustedProxies?: number },
     now: () => number,
     name = "api",
   ): MiddlewareHandler<AppEnv> =>
   async (c, next) => {
-    const client =
-      c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+    const client = clientIp(
+      c.req.header("x-forwarded-for"),
+      opts.trustedProxies ?? 1,
+    );
     const { count, resetAt } = await store.hit(
       `${name}:${client}`,
       opts.windowMs,

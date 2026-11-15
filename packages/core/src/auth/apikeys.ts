@@ -121,7 +121,12 @@ export const rotateApiKey = async (
   now: number = Date.now(),
 ): Promise<{ key: ApiKey; secret: string }> => {
   const old = await store.get(id);
-  if (!old || old.revokedAt) throw new ApiKeyError("unknown or revoked key");
+  if (
+    !old ||
+    old.revokedAt ||
+    (old.expiresAt && Date.parse(old.expiresAt) <= now)
+  )
+    throw new ApiKeyError("unknown, revoked or expired key");
   const next = await createApiKey(
     store,
     { type: old.type, name: old.name, scopes: old.scopes },

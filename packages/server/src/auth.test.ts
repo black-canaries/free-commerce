@@ -84,6 +84,20 @@ describe("admin boundary", () => {
     expect(write.status).toBe(403);
   });
 
+  it("a publishable-typed key is refused even if it holds admin scopes", async () => {
+    const t = await setup();
+    const { key, secret } = await createApiKey(t.apiKeys, {
+      type: "secret",
+      name: "x",
+      scopes: ["admin:read"],
+    });
+    await t.apiKeys.save({ ...key, type: "publishable" });
+    const res = await t.app.request("/admin/ping", {
+      headers: { "x-api-key": secret },
+    });
+    expect(res.status).toBe(403);
+  });
+
   it("cookie-authenticated writes need an allowed Origin", async () => {
     const t = await setup();
     t.app.post("/admin/thing", (c) => c.json({ ok: true }));
@@ -229,6 +243,86 @@ describe("customers", () => {
     let last = 200;
     for (let i = 0; i < 12; i++) last = (await login()).status;
     expect(last).toBe(429);
+  });
+});
+
+describe("login throttling", () => {
+  const attempt = (
+    t: Awaited<ReturnType<typeof setup>>,
+    path: string,
+    email: string,
+    xff: string,
+    headers: Record<string, string> = {},
+  ) =>
+    t.app.request(
+      path,
+      json(
+        { email, password: "wrong horse" },
+        { ...headers, "x-forwarded-for": xff },
+      ),
+    );
+
+  it("spoofed X-Forwarded-For entries do not reset the per-client limit", async () => {
+    const t = await setup();
+    let last = 0;
+    for (let i = 0; i < 12; i++)
+      last = (
+        await attempt(
+          t,
+          "/store/auth/login",
+          `u${i}@example.com`,
+          `spoof${i}, 9.9.9.9`,
+          t.pk,
+        )
+      ).status;
+    expect(last).toBe(429);
+  });
+
+  it("one account is throttled across many client addresses", async () => {
+    const t = await setup();
+    let last = 0;
+    for (let i = 0; i < 12; i++)
+      last = (
+        await attempt(t, "/store/auth/login", creds.email, `10.0.0.${i}`, t.pk)
+      ).status;
+    expect(last).toBe(429);
+  });
+
+  it("the admin login is throttled too", async () => {
+    const t = await setup();
+    let last = 0;
+    for (let i = 0; i < 12; i++)
+      last = (
+        await attempt(t, "/admin/auth/login", `a${i}@example.com`, "9.9.9.9")
+      ).status;
+    expect(last).toBe(429);
+  });
+});
+
+describe("stale credentials on auth routes", () => {
+  it("do not block login", async () => {
+    const t = await setup();
+    await t.auth.signUp("admin", { ...creds, name: "Boss" });
+    const res = await t.app.request(
+      "/admin/auth/login",
+      json(creds, { cookie: "fc_admin=stale" }),
+    );
+    expect(res.status).toBe(200);
+    const c = await t.app.request(
+      "/store/auth/login",
+      json(
+        { ...creds, email: "none@example.com" },
+        { ...t.pk, cookie: "fc_customer=stale" },
+      ),
+    );
+    expect(c.status).toBe(401); // wrong password, not a stale-cookie rejection
+    expect(await c.json()).toMatchObject({
+      message: "Invalid email or password",
+    });
+    const other = await t.app.request("/admin/ping", {
+      headers: { cookie: "fc_admin=stale" },
+    });
+    expect(other.status).toBe(401);
   });
 });
 

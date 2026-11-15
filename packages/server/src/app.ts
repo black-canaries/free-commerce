@@ -37,6 +37,8 @@ export interface AppDeps {
   cookies?: AuthDeps["cookies"];
   /** Requests per window per client on `/store` and `/admin`. */
   rateLimitOptions?: { limit: number; windowMs: number };
+  /** Proxies in front of the app that append to `x-forwarded-for` (default 1). Never trust more than you run. */
+  trustedProxies?: number;
   logger?: Logger;
   tracer?: Tracer;
   now?: () => number;
@@ -50,6 +52,7 @@ export const createApp = (deps: AppDeps) => {
   const authDeps: AuthDeps = {
     auth: deps.auth,
     apiKeys: deps.apiKeys,
+    rateLimit: deps.rateLimit,
     cookies: deps.cookies,
     allowedOrigins: deps.allowedOrigins ?? [],
     now,
@@ -80,13 +83,16 @@ export const createApp = (deps: AppDeps) => {
   );
   const limits = rateLimit(
     deps.rateLimit,
-    deps.rateLimitOptions ?? { limit: 120, windowMs: 60_000 },
+    {
+      ...(deps.rateLimitOptions ?? { limit: 120, windowMs: 60_000 }),
+      trustedProxies: deps.trustedProxies,
+    },
     now,
   );
   // Credential guessing is throttled harder than the API at large; this is the only brute-force defence for logins.
   const authLimits = rateLimit(
     deps.rateLimit,
-    { limit: 10, windowMs: 60_000 },
+    { limit: 10, windowMs: 60_000, trustedProxies: deps.trustedProxies },
     now,
     "auth",
   );
