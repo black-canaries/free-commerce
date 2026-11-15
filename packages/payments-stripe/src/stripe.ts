@@ -81,6 +81,14 @@ function actionOf(i: Intent): Payment["action"] {
     : { type: "client", clientSecret: i.client_secret };
 }
 
+/** ISO 4217 has no decimals for these, but Stripe wants two-decimal amounts (multiples of 100). */
+const STRIPE_x100 = new Set(["ISK", "UGX"]);
+/** Three-decimal currencies: Stripe requires the last digit to be 0. */
+const STRIPE_THREE_DECIMAL = new Set(["BHD", "JOD", "KWD", "OMR", "TND"]);
+
+const fromStripe = (amount: number, currency: string) =>
+  STRIPE_x100.has(currency.toUpperCase()) ? amount / 100 : amount;
+
 function toPayment(i: Intent): Payment {
   const state = stateOf(i);
   const err = i.last_payment_error;
@@ -90,7 +98,10 @@ function toPayment(i: Intent): Payment {
     id: i.id,
     state,
     amount: {
-      amount: state === "captured" ? (i.amount_received ?? i.amount) : i.amount,
+      amount: fromStripe(
+        state === "captured" ? (i.amount_received ?? i.amount) : i.amount,
+        i.currency,
+      ),
       currency: i.currency.toUpperCase(),
     },
     action: state === "requires_action" ? actionOf(i) : undefined,
@@ -111,7 +122,10 @@ function toRefund(r: StripeRefund): Refund {
         : "pending";
   return {
     id: r.id,
-    amount: { amount: r.amount, currency: r.currency.toUpperCase() },
+    amount: {
+      amount: fromStripe(r.amount, r.currency),
+      currency: r.currency.toUpperCase(),
+    },
     state,
   };
 }
@@ -129,6 +143,18 @@ const hex = (s: string) =>
 export function createStripePayments(
   opts: StripePaymentsOptions,
 ): PaymentProvider {
+  if (!/^[sr]k_(test|live)_\w+$/.test(opts.secretKey))
+    throw new ProviderError(
+      NAME,
+      "rejected",
+      "secretKey must be an sk_ or rk_ key",
+    );
+  if (!/^whsec_\S+$/.test(opts.webhookSecret))
+    throw new ProviderError(
+      NAME,
+      "rejected",
+      "webhookSecret must be a whsec_ secret",
+    );
   const send = opts.fetch ?? fetch;
   const now = opts.now ?? Date.now;
   const fail = (
@@ -185,16 +211,19 @@ export function createStripePayments(
   ): Promise<T> {
     const res = await request(method, path, form, idempotencyKey);
     const json = (await res.json().catch(() => ({}))) as {
-      error?: { message?: string; payment_intent?: unknown };
+      error?: { code?: string; type?: string; payment_intent?: unknown };
     };
     if (res.ok) return json as T;
     if (res.status === 402 && json.error?.payment_intent)
       return json.error.payment_intent as T;
-    throw httpError(res.status, json.error?.message ?? "error");
+    throw httpError(
+      res.status,
+      json.error?.code ?? json.error?.type ?? "error",
+    );
   }
 
   const intent = (id: string) =>
-    call<Intent>("GET", `/v1/payment_intents/${id}`);
+    call<Intent>("GET", `/v1/payment_intents/${encodeURIComponent(id)}`);
   const sameCurrency = async (id: string, currency: string) => {
     const i = await intent(id);
     if (i.currency.toUpperCase() !== currency)
@@ -203,7 +232,13 @@ export function createStripePayments(
   };
   const money = (m: { amount: number; currency: string }) => {
     assertChargeable(NAME, m);
-    return { amount: String(m.amount), currency: m.currency.toLowerCase() };
+    if (STRIPE_THREE_DECIMAL.has(m.currency) && m.amount % 10 !== 0)
+      throw fail(
+        "rejected",
+        "amount must be a multiple of 10 for this currency",
+      );
+    const minor = STRIPE_x100.has(m.currency) ? m.amount * 100 : m.amount;
+    return { amount: String(minor), currency: m.currency.toLowerCase() };
   };
 
   async function signatureOk(
@@ -294,7 +329,7 @@ export function createStripePayments(
       return toPayment(
         await call<Intent>(
           "POST",
-          `/v1/payment_intents/${i.paymentId}/confirm`,
+          `/v1/payment_intents/${encodeURIComponent(i.paymentId)}/confirm`,
           { payment_method: i.methodToken, return_url: i.returnUrl },
           i.idempotencyKey,
         ),
@@ -309,7 +344,7 @@ export function createStripePayments(
       return toPayment(
         await call<Intent>(
           "POST",
-          `/v1/payment_intents/${i.paymentId}/capture`,
+          `/v1/payment_intents/${encodeURIComponent(i.paymentId)}/capture`,
           { amount_to_capture: m.amount },
           i.idempotencyKey,
         ),
@@ -331,7 +366,7 @@ export function createStripePayments(
       const m = money(i.amount);
       const pm = await call<{ customer?: string | null }>(
         "GET",
-        `/v1/payment_methods/${i.savedMethodId}`,
+        `/v1/payment_methods/${encodeURIComponent(i.savedMethodId)}`,
       );
       if (pm.customer !== i.customerRef)
         throw fail("not_found", "saved method not found");

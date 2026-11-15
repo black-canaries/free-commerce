@@ -27,7 +27,10 @@ else {
           method: "POST",
           headers: { authorization: `Bearer ${key}` },
         })
-          .then((r) => r.json() as Promise<{ id: string }>)
+          .then((r) => {
+            if (!r.ok) throw new Error(`customer create failed: ${r.status}`);
+            return r.json() as Promise<{ id: string }>;
+          })
           .then((j) => j.id);
         customers.set(ref, c);
       }

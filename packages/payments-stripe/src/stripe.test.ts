@@ -184,6 +184,95 @@ describe("stripe mapping", () => {
   });
 });
 
+describe("stripe currency scale", () => {
+  const charged = async (amount: number, currency: string) => {
+    const { provider, fake } = make();
+    const p = await provider.createPayment({
+      idempotencyKey: "a",
+      amount: { amount, currency },
+      reference: "o",
+    });
+    const sent = new URLSearchParams(await fake.requests[0]?.text());
+    return { sent: sent.get("amount"), back: p.amount };
+  };
+
+  it("zero-decimal currencies are sent as-is", async () => {
+    expect((await charged(1000, "JPY")).sent).toBe("1000");
+  });
+
+  it("ISK and UGX are scaled x100 to Stripe and back", async () => {
+    for (const c of ["ISK", "UGX"])
+      expect(await charged(1000, c)).toEqual({
+        sent: "100000",
+        back: { amount: 1000, currency: c },
+      });
+  });
+
+  it("three-decimal currencies must end in 0, locally", async () => {
+    for (const c of ["BHD", "KWD"]) {
+      expect((await charged(1230, c)).sent).toBe("1230");
+      await expect(charged(1231, c)).rejects.toMatchObject({
+        code: "rejected",
+      });
+    }
+  });
+
+  it("refunds use the same scale and map back", async () => {
+    const { provider, fake } = make();
+    const isk = (amount: number) => ({ amount, currency: "ISK" });
+    const p = await provider.createPayment({
+      idempotencyKey: "a",
+      amount: isk(1000),
+      reference: "o",
+    });
+    await provider.confirm({
+      idempotencyKey: "b",
+      paymentId: p.id,
+      methodToken: "pm_ok",
+    });
+    const r = await provider.refund({
+      idempotencyKey: "c",
+      paymentId: p.id,
+      amount: isk(400),
+    });
+    expect(r.amount).toEqual(isk(400));
+    const sent = new URLSearchParams(await fake.requests.at(-1)?.text());
+    expect(sent.get("amount")).toBe("40000");
+  });
+});
+
+describe("stripe input hardening", () => {
+  it("encodes ids into paths and rejects malformed keys at construction", async () => {
+    const { provider, fake } = make();
+    await provider.retrieve("pi_1/../x?y").catch(() => {});
+    expect(new URL(fake.requests[0]?.url ?? "").pathname).toBe(
+      "/v1/payment_intents/pi_1%2F..%2Fx%3Fy",
+    );
+    const bad = (o: object) =>
+      expect(() =>
+        createStripePayments({ secretKey: SECRET, webhookSecret: WHSEC, ...o }),
+      ).toThrow(ProviderError);
+    bad({ secretKey: "" });
+    bad({ webhookSecret: "" });
+  });
+
+  it("409 is retryable; errors carry Stripe's code, not its message", async () => {
+    const res = async () =>
+      new Response(
+        JSON.stringify({
+          error: { code: "idempotency_key_in_use", message: "customer text" },
+        }),
+        { status: 409 },
+      );
+    const e = (await make(res)
+      .provider.retrieve("pi_1")
+      .catch((x: unknown) => x)) as ProviderError;
+    expect(e.retryable).toBe(true);
+    expect(e.message).toContain("idempotency_key_in_use");
+    expect(e.message).not.toContain("customer text");
+  });
+});
+
 describe("stripe webhooks", () => {
   const verify = (
     body: string,
@@ -245,6 +334,7 @@ describe("stripe webhooks", () => {
     const bad = (b: string, h: Record<string, string | undefined>) =>
       expect(verify(b, h)).rejects.toMatchObject({ code: "rejected" });
     await bad(body, signed(body, T - 301));
+    await bad(body, signed(body, T + 301));
     await bad(`${body} `, signed(body, T));
     const other = intentEvent("customer.created", { id: "cus_1" });
     await bad(other, signed(other, T));
