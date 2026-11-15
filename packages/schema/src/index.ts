@@ -9,5 +9,6 @@ export * from "./inventory.js";
 export * from "./money.js";
 export * from "./order.js";
 export * from "./page.js";
+export * from "./search.js";
 export * from "./tax.js";
 export * from "./time.js";
