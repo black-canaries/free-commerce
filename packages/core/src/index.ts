@@ -1,4 +1,16 @@
 export {
+  addLine,
+  CartError,
+  type CartTotals,
+  cartTotals,
+  createCart,
+  getCart,
+  newCart,
+  removeLine,
+  requiresShipping,
+  updateLine,
+} from "./cart/cart";
+export {
   archiveProduct,
   CatalogError,
   createProduct,
@@ -24,6 +36,11 @@ export {
   transitionLifecycle,
   transitionPayment,
 } from "./orders/machines";
+export {
+  type PriceOptions,
+  PricingError,
+  resolvePrice,
+} from "./pricing/pricing";
 export { ProviderError, type ProviderErrorCode } from "./providers/error";
 export {
   type StorageConfig,
