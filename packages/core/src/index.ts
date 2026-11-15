@@ -18,6 +18,11 @@ export {
   transitionLifecycle,
   transitionPayment,
 } from "./orders/machines";
+export {
+  type PriceOptions,
+  PricingError,
+  resolvePrice,
+} from "./pricing/pricing";
 export { ProviderError, type ProviderErrorCode } from "./providers/error";
 export {
   type StorageConfig,
