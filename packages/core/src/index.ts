@@ -1,4 +1,18 @@
 export {
+  type Access,
+  ADMIN_GROUPS,
+  type AdminGroup,
+  type AuditEntry,
+  type AuditRepository,
+  adminGroup,
+  can,
+  newAuditEntry,
+  ROLES,
+  type Role,
+  type RoleAssignment,
+  summarize,
+} from "./access/access";
+export {
   API_SCOPES,
   type ApiKey,
   ApiKeyError,

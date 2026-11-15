@@ -1,3 +1,4 @@
+import { createMemoryDatabase } from "@free-commerce/adapter-memory";
 import {
   type ApiScope,
   createApiKey,
@@ -20,12 +21,14 @@ export const setup = async (over: Partial<AppDeps> = {}) => {
   const spans: { name: string; attrs: Record<string, unknown> }[] = [];
   const auth = over.auth ?? createFakeAuth();
   const apiKeys = createFakeApiKeyStore();
+  const db = createMemoryDatabase();
   const app = createApp({
     checkDb: async () => {},
     idempotency: memoryIdempotencyStore(),
     rateLimit: memoryRateLimitStore(),
     auth,
     apiKeys,
+    db,
     customerOrders: async () => [],
     allowedOrigins: ["https://shop.example"],
     logger: (e) => logs.push(e),
@@ -48,6 +51,7 @@ export const setup = async (over: Partial<AppDeps> = {}) => {
     spans,
     auth,
     apiKeys,
+    db,
     /** Storefront key and a secret server key with admin scopes, as request headers. */
     pk: await header({
       type: "publishable",

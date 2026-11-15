@@ -1,4 +1,6 @@
 import {
+  type AuditEntry,
+  type AuditRepository,
   type Database,
   type DiscountRepository,
   type DomainEvent,
@@ -20,7 +22,7 @@ import type {
 type State = {
   [K in Exclude<
     keyof Repositories,
-    "inventory" | "outbox" | "discounts"
+    "inventory" | "outbox" | "discounts" | "audit"
   >]: Repositories[K] extends Repository<infer T> ? Map<string, T> : never;
 } & {
   stock: Map<string, StockLevel>;
@@ -28,17 +30,20 @@ type State = {
   discounts: Map<string, DiscountCode>;
   redemptions: Map<string, { codeId: string; customerKey?: string }>;
   outbox: Map<string, { event: DomainEvent; delivered: boolean }>;
+  audit: Map<string, AuditEntry>;
 };
 
 const emptyState = (): State => ({
   products: new Map(),
   carts: new Map(),
   orders: new Map(),
+  roles: new Map(),
   stock: new Map(),
   reservations: new Map(),
   discounts: new Map(),
   redemptions: new Map(),
   outbox: new Map(),
+  audit: new Map(),
 });
 
 const repository = <T extends Entity>(
@@ -161,6 +166,25 @@ const discounts = (state: () => State): DiscountRepository => {
   };
 };
 
+const audit = (rows: () => State["audit"]): AuditRepository => ({
+  async append(entry) {
+    if (!rows().has(entry.id)) rows().set(entry.id, structuredClone(entry));
+  },
+  async list({ limit, cursor, actorId }) {
+    const ids = [...rows().values()]
+      .filter((e) => actorId === undefined || e.actor.id === actorId)
+      .map((e) => e.id)
+      .sort()
+      .reverse()
+      .filter((id) => cursor === undefined || id < cursor);
+    const page = ids.slice(0, limit);
+    return {
+      items: page.map((id) => structuredClone(rows().get(id) as AuditEntry)),
+      nextCursor: ids.length > limit ? (page.at(-1) ?? null) : null,
+    };
+  },
+});
+
 /** Map insertion order is the outbox order. */
 const outbox = (rows: () => State["outbox"]): Outbox => ({
   async add(event) {
@@ -185,6 +209,8 @@ const bind = (state: () => State): Repositories => ({
   products: repository(() => state().products),
   carts: repository(() => state().carts),
   orders: repository(() => state().orders),
+  roles: repository(() => state().roles),
+  audit: audit(() => state().audit),
   outbox: outbox(() => state().outbox),
 });
 
@@ -203,6 +229,8 @@ export function createMemoryDatabase(): Database {
           products: new Map(state.products),
           carts: new Map(state.carts),
           orders: new Map(state.orders),
+          roles: new Map(state.roles),
+          audit: new Map(state.audit),
           stock: new Map(state.stock),
           reservations: new Map(state.reservations),
           discounts: new Map(state.discounts),

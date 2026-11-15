@@ -34,7 +34,9 @@ const admin = async (t: Awaited<ReturnType<typeof setup>>) => {
     "/admin/auth/login",
     json({ ...creds, mode: "bearer" }),
   );
-  return { authorization: `Bearer ${((await res.json()) as Login).token}` };
+  const login = (await res.json()) as Login;
+  await t.db.roles.save({ id: login.userId, role: "owner" });
+  return { authorization: `Bearer ${login.token}` };
 };
 
 describe("admin boundary", () => {
@@ -100,14 +102,16 @@ describe("admin boundary", () => {
 
   it("cookie-authenticated writes need an allowed Origin", async () => {
     const t = await setup();
-    t.app.post("/admin/thing", (c) => c.json({ ok: true }));
+    t.app.post("/admin/settings", (c) => c.json({ ok: true }));
     await t.auth.signUp("admin", { ...creds, name: "Boss" });
     const login = await t.app.request("/admin/auth/login", json(creds));
+    const { userId } = (await login.clone().json()) as Login;
+    await t.db.roles.save({ id: userId, role: "owner" });
     const cookie = (login.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
     expect(login.headers.get("set-cookie")).toMatch(/HttpOnly/i);
     const attempt = (origin?: string) =>
       t.app.fetch(
-        post({}, `k-${origin}`, "/admin/thing", {
+        post({}, `k-${origin}`, "/admin/settings", {
           cookie,
           ...(origin && { origin }),
         }),

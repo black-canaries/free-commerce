@@ -16,5 +16,8 @@
     "@free-commerce/schema": "workspace:*",
     "hono": "4.13.14",
     "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@free-commerce/adapter-memory": "workspace:*"
   }
 }
