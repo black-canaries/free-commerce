@@ -149,6 +149,10 @@ importers:
       zod:
         specifier: 4.6.7
         version: 4.6.7
+    devDependencies:
+      '@free-commerce/adapter-memory':
+        specifier: workspace:*
+        version: link:../adapter-memory
 
   packages/storage-local:
     dependencies:

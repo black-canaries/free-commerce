@@ -1,4 +1,6 @@
 import {
+  type AuditEntry,
+  type AuditRepository,
   type Database,
   type DiscountRepository,
   type DomainEvent,
@@ -17,7 +19,7 @@ import {
   type Reservation,
   toTimestamp,
 } from "@free-commerce/schema";
-import { and, asc, eq, gt, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, lt, sql } from "drizzle-orm";
 import {
   bigserial,
   integer,
@@ -34,8 +36,9 @@ const tables = {
   products: docTable("products"),
   carts: docTable("carts"),
   orders: docTable("orders"),
+  roles: docTable("roles"),
 } satisfies Record<
-  Exclude<keyof Repositories, "inventory" | "outbox" | "discounts">,
+  Exclude<keyof Repositories, "inventory" | "outbox" | "discounts" | "audit">,
   unknown
 >;
 
@@ -48,6 +51,7 @@ function docTable(name: string) {
 }
 
 const discountTable = docTable("discounts");
+const auditTable = docTable("audit");
 const redemptions = pgTable("redemptions", {
   id: text("id").primaryKey(),
   codeId: text("code_id").notNull(),
@@ -275,6 +279,36 @@ const discounts = (db: Db): DiscountRepository => {
   };
 };
 
+/** Append-only JSON documents; ids sort by time, so newest-first is `id desc`. */
+const audit = (db: Db): AuditRepository => ({
+  async append(entry) {
+    await db
+      .insert(auditTable)
+      .values({ id: entry.id, doc: entry })
+      .onConflictDoNothing({ target: auditTable.id });
+  },
+  async list({ limit, cursor, actorId }) {
+    const rows = await db
+      .select({ doc: auditTable.doc })
+      .from(auditTable)
+      .where(
+        and(
+          cursor === undefined ? undefined : lt(auditTable.id, cursor),
+          actorId === undefined
+            ? undefined
+            : sql`${auditTable.doc}->'actor'->>'id' = ${actorId}`,
+        ),
+      )
+      .orderBy(desc(auditTable.id))
+      .limit(limit + 1);
+    const items = rows.slice(0, limit).map((r) => r.doc as AuditEntry);
+    return {
+      items,
+      nextCursor: rows.length > limit ? (items.at(-1)?.id ?? null) : null,
+    };
+  },
+});
+
 const outbox = (db: Db): Outbox => ({
   async add(event) {
     await db
@@ -305,6 +339,8 @@ const bind = (db: Db): Repositories => ({
   products: repository(db, tables.products),
   carts: repository(db, tables.carts),
   orders: repository(db, tables.orders),
+  roles: repository(db, tables.roles),
+  audit: audit(db),
   outbox: outbox(db),
 });
 

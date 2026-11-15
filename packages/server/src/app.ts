@@ -1,8 +1,18 @@
-import type { ApiKeyStore, AuthProvider } from "@free-commerce/core";
+import {
+  type ApiKeyStore,
+  type AuthProvider,
+  type Database,
+  newAuditEntry,
+  type Page,
+  type Repository,
+  ROLES,
+  type RoleAssignment,
+} from "@free-commerce/core";
 import { type Order, PageQuery } from "@free-commerce/schema";
 import { Hono, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
+import { actorOf, audited, authorize } from "./access.js";
 import {
   type AuthDeps,
   authenticate,
@@ -30,6 +40,8 @@ export interface AppDeps {
   rateLimit: RateLimitStore;
   auth: AuthProvider;
   apiKeys: ApiKeyStore;
+  /** Admin roles and the audit log; `transaction` keeps role changes atomic. */
+  db: Pick<Database, "roles" | "audit" | "transaction">;
   /** Orders belonging to a customer (their `cus_` id); this is what keeps customers to their own orders. */
   customerOrders: (customerId: string) => Promise<Order[]>;
   /** Browser origins of storefronts and the admin app (CORS, and CSRF check for cookie-authenticated admin writes). */
@@ -43,6 +55,27 @@ export interface AppDeps {
   tracer?: Tracer;
   now?: () => number;
 }
+
+/** Pages through the roles until an owner other than `id` turns up who still exists as an admin user. */
+const hasOtherOwner = async (
+  roles: Repository<RoleAssignment>,
+  auth: AuthProvider,
+  id: string,
+): Promise<boolean> => {
+  let cursor: string | undefined;
+  do {
+    const page: Page<RoleAssignment> = await roles.list({ limit: 100, cursor });
+    for (const r of page.items)
+      if (
+        r.role === "owner" &&
+        r.id !== id &&
+        (await auth.userExists("admin", r.id))
+      )
+        return true;
+    cursor = page.nextCursor ?? undefined;
+  } while (cursor);
+  return false;
+};
 
 /** Web-standard APIs only, so the same app runs on Node, Bun and edge runtimes. */
 export const createApp = (deps: AppDeps) => {
@@ -58,7 +91,9 @@ export const createApp = (deps: AppDeps) => {
     now,
   };
 
-  // Order: context -> CORS -> rate limit -> credentials -> guard -> idempotency -> handler.
+  const accessDeps = { db: deps.db, now };
+
+  // Order: context -> CORS -> rate limit -> credentials -> guard -> role -> idempotency -> audit -> handler.
   app.use(
     requestContext(
       deps.logger ?? consoleLogger,
@@ -114,7 +149,9 @@ export const createApp = (deps: AppDeps) => {
     limits,
     authenticate(authDeps, "admin"),
     requireAdmin(authDeps),
+    authorize(accessDeps),
     unlessAuthRoute,
+    audited(accessDeps),
   );
   mountAuthRoutes(app, authDeps, "customer");
   mountAuthRoutes(app, authDeps, "admin");
@@ -155,6 +192,53 @@ export const createApp = (deps: AppDeps) => {
 
   const admin = app.basePath("/admin");
   admin.get("/ping", (c) => c.json(parse(PageQuery, c.req.query())));
+
+  admin.get("/audit", async (c) => {
+    const { actorId, ...page } = parse(
+      PageQuery.extend({ actorId: z.string().max(128).optional() }),
+      c.req.query(),
+    );
+    return c.json(await deps.db.audit.list({ ...page, actorId }));
+  });
+
+  admin.get("/team", async (c) =>
+    c.json(await deps.db.roles.list(parse(PageQuery, c.req.query()))),
+  );
+  // The whole check-and-write runs in one transaction, so two owners cannot demote each other to zero owners.
+  admin.put("/team/:userId", async (c) => {
+    const { role } = parse(
+      z.object({ role: z.enum(ROLES) }),
+      await c.req.json().catch(() => undefined),
+    );
+    const id = c.req.param("userId");
+    if (!(await deps.auth.userExists("admin", id)))
+      throw new HttpError("not_found", "No such admin user");
+    // Role and audit entry commit together; the middleware then skips its own entry.
+    await deps.db.transaction(async (tx) => {
+      const before = (await tx.roles.get(id))?.role;
+      if (
+        before === "owner" &&
+        role !== "owner" &&
+        !(await hasOtherOwner(tx.roles, deps.auth, id))
+      )
+        throw new HttpError("conflict", "Cannot remove the last owner");
+      await tx.roles.save({ id, role });
+      await tx.audit.append(
+        newAuditEntry(
+          {
+            actor: actorOf(c),
+            action: `${c.req.method} ${c.req.routePath}`,
+            target: `team/${id}`,
+            before: { role: before ?? null },
+            after: { role },
+          },
+          now(),
+        ),
+      );
+    });
+    c.set("audited", true);
+    return c.json({ id, role });
+  });
 
   app.notFound((c) => {
     const { requestId } = c.var;

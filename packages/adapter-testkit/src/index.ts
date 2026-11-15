@@ -9,6 +9,7 @@ import {
   relayOutbox,
 } from "@free-commerce/core";
 import { describe, expect, it } from "vitest";
+import { auditCases } from "./audit";
 import { discountCases } from "./discounts";
 import { inventoryCases } from "./inventory";
 
@@ -38,6 +39,10 @@ const aggregates = {
   products: (id: string, v = 1) => product(id, `Mug ${v}`),
   carts: plain,
   orders: plain,
+  roles: (id: string, v = 1) => ({
+    id,
+    role: v === 1 ? ("staff" as const) : ("owner" as const),
+  }),
   discounts: (id: string, v = 1) => ({ id, code: `CODE-${id}`, v }),
 } as const;
 
@@ -78,6 +83,7 @@ export function repositoryConformance(
 
     inventoryCases(make);
     discountCases(make);
+    auditCases(make);
 
     it("commits transaction writes and returns the result", async () => {
       const db = await make();

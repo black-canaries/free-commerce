@@ -5,6 +5,7 @@ import type {
   Reservation,
   StockLevel,
 } from "@free-commerce/schema";
+import type { AuditRepository, RoleAssignment } from "./access/access";
 import type { Outbox } from "./events/events";
 
 /** @experimental Placeholder entity shape; Phase 1 replaces it with the real Zod-derived types. */
@@ -102,6 +103,8 @@ export interface DiscountRepository extends Repository<DiscountCode> {
 
 /** @experimental */
 export interface Repositories {
+  roles: Repository<RoleAssignment>;
+  audit: AuditRepository;
   discounts: DiscountRepository;
   inventory: InventoryRepository;
   products: ProductRepository;

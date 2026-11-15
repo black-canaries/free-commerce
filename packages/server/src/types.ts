@@ -56,5 +56,13 @@ export interface AuthState {
 }
 
 export type AppEnv = {
-  Variables: { requestId: string; log: Logger; auth: AuthState };
+  Variables: {
+    requestId: string;
+    log: Logger;
+    auth: AuthState;
+    /** Set by handlers via `recordChange`, read by the audit middleware. */
+    /** Set when the handler already wrote its audit entry in its own transaction. */
+    audited?: boolean;
+    change?: { target: string; before?: unknown; after?: unknown };
+  };
 };

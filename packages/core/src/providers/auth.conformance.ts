@@ -68,6 +68,13 @@ export function authConformance(name: string, make: () => AuthProvider): void {
       expect(admin.userId).not.toBe(userId);
     });
 
+    it("knows its own users only, per realm", async () => {
+      const { auth, userId } = await registered();
+      expect(await auth.userExists("customer", userId)).toBe(true);
+      expect(await auth.userExists("admin", userId)).toBe(false);
+      expect(await auth.userExists("customer", "nope")).toBe(false);
+    });
+
     it("sessions expire", async () => {
       vi.useFakeTimers();
       try {

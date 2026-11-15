@@ -33,7 +33,10 @@ const bearer = (c: Context): string | undefined => {
   return h?.toLowerCase().startsWith("bearer ") ? h.slice(7).trim() : undefined;
 };
 
-/** Public auth routes (login, register, logout) take no prior credentials beyond the storefront key. */
+/**
+ * Public auth routes (login, register, logout) take no prior credentials beyond the storefront key. They skip
+ * authorization, idempotency and audit, so never mount an authenticated route under `/admin/auth/`.
+ */
 export const isAuthRoute = (path: string): boolean =>
   /^\/(store|admin)\/auth\//.test(path);
 
