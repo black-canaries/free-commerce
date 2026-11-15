@@ -164,15 +164,21 @@ export type CartTotals = {
 /**
  * @experimental `total = subtotal - discount + shipping + tax`. Discount, shipping and tax come from
  * their own engines (pricing, shipping, tax) in minor units; discount is capped at the subtotal and
- * shipping is zero when `requiresShipping` is false.
+ * shipping is zero when `requiresShipping` is false. With `taxIncluded` the tax is reported but already
+ * part of the prices, so it is not added to the total.
  */
 export function cartTotals(
   cart: Cart,
-  adjustments: { discount?: number; shipping?: number; tax?: number } = {},
+  adjustments: {
+    discount?: number;
+    shipping?: number;
+    tax?: number;
+    taxIncluded?: boolean;
+  } = {},
 ): CartTotals {
   const { currency } = cart;
-  for (const n of Object.values(adjustments))
-    if (!Number.isSafeInteger(n) || n < 0)
+  for (const n of [adjustments.discount, adjustments.shipping, adjustments.tax])
+    if (n !== undefined && (!Number.isSafeInteger(n) || n < 0))
       throw invalid("adjustments must be non-negative integers");
   const subtotal = cart.lines.reduce((s, l) => s + l.unitPrice * l.quantity, 0);
   const discount = Math.min(adjustments.discount ?? 0, subtotal);
@@ -184,6 +190,8 @@ export function cartTotals(
     discount: m(discount),
     shipping: m(shipping),
     tax: m(tax),
-    total: m(subtotal - discount + shipping + tax),
+    total: m(
+      subtotal - discount + shipping + (adjustments.taxIncluded ? 0 : tax),
+    ),
   };
 }
