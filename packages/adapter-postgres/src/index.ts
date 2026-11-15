@@ -1,5 +1,6 @@
 import {
   type Database,
+  type DiscountRepository,
   type DomainEvent,
   decideReserveRetry,
   decideSettle,
@@ -9,8 +10,13 @@ import {
   type Page,
   type Repositories,
   type Repository,
+  usageRefusal,
 } from "@free-commerce/core";
-import { type Reservation, toTimestamp } from "@free-commerce/schema";
+import {
+  type DiscountCode,
+  type Reservation,
+  toTimestamp,
+} from "@free-commerce/schema";
 import { and, asc, eq, gt, isNull, sql } from "drizzle-orm";
 import {
   bigserial,
@@ -29,7 +35,7 @@ const tables = {
   carts: docTable("carts"),
   orders: docTable("orders"),
 } satisfies Record<
-  Exclude<keyof Repositories, "inventory" | "outbox">,
+  Exclude<keyof Repositories, "inventory" | "outbox" | "discounts">,
   unknown
 >;
 
@@ -40,6 +46,13 @@ function docTable(name: string) {
     doc: jsonb("doc").notNull(),
   });
 }
+
+const discountTable = docTable("discounts");
+const redemptions = pgTable("redemptions", {
+  id: text("id").primaryKey(),
+  codeId: text("code_id").notNull(),
+  customerKey: text("customer_key"),
+});
 
 const stock = pgTable("stock", {
   variantId: text("variant_id").primaryKey(),
@@ -62,7 +75,7 @@ const reservations = pgTable("reservations", {
 
 type Db = Pick<
   ReturnType<typeof drizzle>,
-  "select" | "insert" | "update" | "execute" | "transaction"
+  "select" | "insert" | "update" | "delete" | "execute" | "transaction"
 >;
 
 const repository = <T extends Entity>(
@@ -207,6 +220,61 @@ const inventory = (db: Db): InventoryRepository => {
   };
 };
 
+/**
+ * Codes are JSON documents (unique index on `doc->>'code'`); redemptions have real columns. `redeem`
+ * runs in a transaction under a per-code advisory lock, so count-check-insert is serialised per code.
+ */
+const discounts = (db: Db): DiscountRepository => {
+  const count = async (q: Db, codeId: string, key?: string) => {
+    const [row] = await q
+      .select({
+        total: sql<number>`count(*)::int`,
+        customer: sql<number>`count(*) filter (where ${redemptions.customerKey} = ${key ?? null})::int`,
+      })
+      .from(redemptions)
+      .where(eq(redemptions.codeId, codeId));
+    return { total: row?.total ?? 0, customer: row?.customer ?? 0 };
+  };
+  return {
+    ...repository<DiscountCode>(db, discountTable),
+    async getByCode(code) {
+      const [row] = await db
+        .select({ doc: discountTable.doc })
+        .from(discountTable)
+        .where(sql`${discountTable.doc}->>'code' = ${code}`);
+      return (row?.doc as DiscountCode | undefined) ?? null;
+    },
+    usage: (codeId, key) => count(db, codeId, key),
+    redeem: (codeId, redemptionId, customerKey) =>
+      db.transaction(async (tx) => {
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtextextended(${codeId}, 7243004))`,
+        );
+        const [row] = await tx
+          .select({ doc: discountTable.doc })
+          .from(discountTable)
+          .where(eq(discountTable.id, codeId));
+        const code = row?.doc as DiscountCode | undefined;
+        if (!code) return { ok: false, reason: "not_found" } as const;
+        const [seen] = await tx
+          .select({ id: redemptions.id })
+          .from(redemptions)
+          .where(eq(redemptions.id, redemptionId));
+        if (seen) return { ok: true } as const;
+        const n = await count(tx, codeId, customerKey);
+        const no = usageRefusal(code, n, customerKey);
+        if (no) return { ok: false, reason: no } as const;
+        await tx
+          .insert(redemptions)
+          .values({ id: redemptionId, codeId, customerKey });
+        return { ok: true } as const;
+      }),
+    async release(redemptionId) {
+      await db.delete(redemptions).where(eq(redemptions.id, redemptionId));
+    },
+  };
+};
+
 const outbox = (db: Db): Outbox => ({
   async add(event) {
     await db
@@ -233,6 +301,7 @@ const outbox = (db: Db): Outbox => ({
 
 const bind = (db: Db): Repositories => ({
   inventory: inventory(db),
+  discounts: discounts(db),
   products: repository(db, tables.products),
   carts: repository(db, tables.carts),
   orders: repository(db, tables.orders),
