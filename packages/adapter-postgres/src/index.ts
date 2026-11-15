@@ -329,3 +329,5 @@ export function createPostgresDatabase(client: Sql): Database {
       }),
   };
 }
+
+export { createPostgresSearch } from "./search";

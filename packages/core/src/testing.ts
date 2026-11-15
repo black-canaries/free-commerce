@@ -6,4 +6,6 @@ export {
   createFakePayments,
   FAKE_TOKENS,
 } from "./providers/payment.fake";
+export { searchConformance } from "./providers/search.conformance";
+export { createFakeSearch } from "./providers/search.fake";
 export { storageConformance } from "./providers/storage.conformance";

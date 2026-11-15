@@ -92,6 +92,12 @@ export {
 } from "./providers/payment";
 export { createManualPayments } from "./providers/payment.manual";
 export {
+  offsetOf,
+  type SearchDoc,
+  type SearchProvider,
+  toSearchDoc,
+} from "./providers/search";
+export {
   createFlatRateShipping,
   createWeightBasedShipping,
   type FlatRateConfig,
