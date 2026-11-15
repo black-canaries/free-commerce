@@ -105,3 +105,8 @@ export {
   type StepContext,
   type Tracer,
 } from "./saga/runner";
+export {
+  calculateTax,
+  findTaxRegion,
+  type TaxResult,
+} from "./tax/tax";
