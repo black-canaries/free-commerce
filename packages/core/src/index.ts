@@ -1,4 +1,17 @@
 export {
+  API_SCOPES,
+  type ApiKey,
+  ApiKeyError,
+  type ApiKeyStore,
+  type ApiKeyType,
+  type ApiScope,
+  createApiKey,
+  type NewApiKey,
+  revokeApiKey,
+  rotateApiKey,
+  verifyApiKey,
+} from "./auth/apikeys";
+export {
   addLine,
   CartError,
   type CartTotals,
@@ -19,6 +32,16 @@ export {
   updateProduct,
   type VariantInput,
 } from "./catalog/catalog";
+export {
+  applyDiscount,
+  type DiscountEffect,
+  DiscountError,
+  type DiscountReason,
+  normalizeCode,
+  redeemDiscount,
+  releaseDiscount,
+  usageRefusal,
+} from "./discounts/discounts";
 export {
   createEventBus,
   type DomainEvent,
@@ -50,6 +73,11 @@ export {
   PricingError,
   resolvePrice,
 } from "./pricing/pricing";
+export type {
+  AuthProvider,
+  AuthRealm,
+  AuthSession,
+} from "./providers/auth";
 export { ProviderError, type ProviderErrorCode } from "./providers/error";
 export {
   assertChargeable,
@@ -84,6 +112,7 @@ export { isSafeKey, newStorageKey, validateUpload } from "./providers/upload";
 export type {
   CartRepository,
   Database,
+  DiscountRepository,
   Entity,
   InventoryRepository,
   OrderRepository,

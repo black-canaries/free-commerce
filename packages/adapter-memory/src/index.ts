@@ -1,5 +1,6 @@
 import {
   type Database,
+  type DiscountRepository,
   type DomainEvent,
   decideReserveRetry,
   decideSettle,
@@ -8,17 +9,24 @@ import {
   type Outbox,
   type Repositories,
   type Repository,
+  usageRefusal,
 } from "@free-commerce/core";
-import type { Reservation, StockLevel } from "@free-commerce/schema";
+import type {
+  DiscountCode,
+  Reservation,
+  StockLevel,
+} from "@free-commerce/schema";
 
 type State = {
   [K in Exclude<
     keyof Repositories,
-    "inventory" | "outbox"
+    "inventory" | "outbox" | "discounts"
   >]: Repositories[K] extends Repository<infer T> ? Map<string, T> : never;
 } & {
   stock: Map<string, StockLevel>;
   reservations: Map<string, Reservation>;
+  discounts: Map<string, DiscountCode>;
+  redemptions: Map<string, { codeId: string; customerKey?: string }>;
   outbox: Map<string, { event: DomainEvent; delivered: boolean }>;
 };
 
@@ -28,6 +36,8 @@ const emptyState = (): State => ({
   orders: new Map(),
   stock: new Map(),
   reservations: new Map(),
+  discounts: new Map(),
+  redemptions: new Map(),
   outbox: new Map(),
 });
 
@@ -104,6 +114,53 @@ const inventory = (state: () => State): InventoryRepository => ({
   },
 });
 
+const discounts = (state: () => State): DiscountRepository => {
+  const base = repository(() => state().discounts);
+  const counts = (codeId: string, key?: string) => {
+    const mine = [...state().redemptions.values()].filter(
+      (r) => r.codeId === codeId,
+    );
+    return {
+      total: mine.length,
+      customer:
+        key === undefined
+          ? 0
+          : mine.filter((r) => r.customerKey === key).length,
+    };
+  };
+  return {
+    ...base,
+    async save(code) {
+      for (const other of state().discounts.values())
+        if (other.code === code.code && other.id !== code.id)
+          throw new Error(`discount code ${code.code} already exists`);
+      return base.save(code);
+    },
+    async getByCode(code) {
+      const row = [...state().discounts.values()].find((d) => d.code === code);
+      return row ? structuredClone(row) : null;
+    },
+    async usage(codeId, key) {
+      return counts(codeId, key);
+    },
+    // Synchronous after entry, so atomic on the JS event loop.
+    async redeem(codeId, redemptionId, customerKey) {
+      const s = state();
+      const code = s.discounts.get(codeId);
+      if (!code) return { ok: false, reason: "not_found" };
+      if (s.redemptions.has(redemptionId)) return { ok: true };
+      const n = counts(codeId, customerKey);
+      const no = usageRefusal(code, n, customerKey);
+      if (no) return { ok: false, reason: no };
+      s.redemptions.set(redemptionId, { codeId, customerKey });
+      return { ok: true };
+    },
+    async release(redemptionId) {
+      state().redemptions.delete(redemptionId);
+    },
+  };
+};
+
 /** Map insertion order is the outbox order. */
 const outbox = (rows: () => State["outbox"]): Outbox => ({
   async add(event) {
@@ -124,6 +181,7 @@ const outbox = (rows: () => State["outbox"]): Outbox => ({
 
 const bind = (state: () => State): Repositories => ({
   inventory: inventory(state),
+  discounts: discounts(state),
   products: repository(() => state().products),
   carts: repository(() => state().carts),
   orders: repository(() => state().orders),
@@ -147,6 +205,8 @@ export function createMemoryDatabase(): Database {
           orders: new Map(state.orders),
           stock: new Map(state.stock),
           reservations: new Map(state.reservations),
+          discounts: new Map(state.discounts),
+          redemptions: new Map(state.redemptions),
           outbox: new Map([...state.outbox].map(([k, v]) => [k, { ...v }])),
         };
         const result = await fn(bind(() => copy));

@@ -2,10 +2,11 @@ import type { MiddlewareHandler } from "hono";
 import { HttpError } from "./errors.js";
 import type {
   AppEnv,
+  AuthState,
+  IdempotencyEntry,
   IdempotencyStore,
   Logger,
   RateLimitStore,
-  StoredResponse,
   Tracer,
 } from "./types.js";
 
@@ -46,17 +47,32 @@ export const requestContext =
     });
   };
 
-/** Fixed-window limit per client (first `x-forwarded-for` hop: the deploy's proxy must set it). */
+/**
+ * The client address as seen by the outermost of `trustedProxies` proxies: the entry that many hops from the
+ * right of `x-forwarded-for`. Earlier entries are client-supplied and ignored. Without the header: "unknown".
+ */
+const clientIp = (header: string | undefined, trustedProxies: number) => {
+  const hops = header?.split(",").map((h) => h.trim()) ?? [];
+  return hops[Math.max(0, hops.length - trustedProxies)] || "unknown";
+};
+
+/** Fixed-window limit per client (see `clientIp`; `trustedProxies` must match the deployment). */
 export const rateLimit =
   (
     store: RateLimitStore,
-    opts: { limit: number; windowMs: number },
+    opts: { limit: number; windowMs: number; trustedProxies?: number },
     now: () => number,
+    name = "api",
   ): MiddlewareHandler<AppEnv> =>
   async (c, next) => {
-    const client =
-      c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
-    const { count, resetAt } = await store.hit(client, opts.windowMs);
+    const client = clientIp(
+      c.req.header("x-forwarded-for"),
+      opts.trustedProxies ?? 1,
+    );
+    const { count, resetAt } = await store.hit(
+      `${name}:${client}`,
+      opts.windowMs,
+    );
     if (count > opts.limit) {
       const retryAfter = Math.max(1, Math.ceil((resetAt - now()) / 1000));
       throw new HttpError("rate_limited", "Too many requests", {
@@ -85,44 +101,65 @@ const requireKey = (key: string | undefined): string => {
   );
 };
 
-const replay = (hit: StoredResponse, fingerprint: string): Response => {
+const replay = (hit: IdempotencyEntry, fingerprint: string): Response => {
   if (hit.fingerprint !== fingerprint)
     throw new HttpError(
       "idempotency_key_reuse",
       "Idempotency-Key was already used with a different request",
     );
-  return new Response(hit.body, {
-    status: hit.status,
+  if (!hit.response)
+    throw new HttpError(
+      "conflict",
+      "A request with this Idempotency-Key is still being processed",
+      { headers: { "retry-after": "1" } },
+    );
+  return new Response(hit.response.body, {
+    status: hit.response.status,
     headers: {
-      "content-type": hit.contentType,
+      "content-type": hit.response.contentType,
       "idempotent-replayed": "true",
     },
   });
 };
 
+/** Keys are private to the caller: a key from one principal can neither replay nor block another's request. */
+const principalScope = ({ admin, customer, key }: AuthState): string =>
+  customer
+    ? `cus:${customer.userId}`
+    : admin
+      ? `adm:${admin.userId}`
+      : key
+        ? `key:${key.id}`
+        : "anon";
+
 /**
- * Mutating requests must carry `Idempotency-Key`. Same key and same request (method, path, query, body)
- * replays the stored response; same key with anything different is `idempotency_key_reuse`.
- * 5xx responses are not stored so the client can retry.
+ * Mutating requests must carry `Idempotency-Key`, scoped to the authenticated principal. Same key and same
+ * request (method, path, query, body) replays the stored response; same key with anything different is
+ * `idempotency_key_reuse`; same key while the first is still running is `conflict` (409, retry shortly).
+ * 5xx responses release the key so the client can retry.
  */
 export const idempotency =
   (store: IdempotencyStore): MiddlewareHandler<AppEnv> =>
   async (c, next) => {
     if (!MUTATING.has(c.req.method)) return next();
-    const key = requireKey(c.req.header("idempotency-key"));
+    const key = `${principalScope(c.var.auth)}:${requireKey(c.req.header("idempotency-key"))}`;
     const { pathname, search } = new URL(c.req.url);
     const body = await c.req.raw.clone().text();
     const fingerprint = await sha256(
       `${c.req.method} ${pathname}${search}\n${body}`,
     );
-    const hit = await store.get(key);
-    if (hit) return replay(hit, fingerprint);
-    await next();
-    if (c.res.status < 500)
-      await store.set(key, {
-        fingerprint,
-        status: c.res.status,
-        contentType: c.res.headers.get("content-type") ?? "application/json",
-        body: await c.res.clone().text(),
-      });
+    const existing = await store.claim(key, fingerprint);
+    if (existing) return replay(existing, fingerprint);
+    try {
+      await next();
+    } catch (err) {
+      await store.release(key);
+      throw err;
+    }
+    if (c.res.status >= 500) return store.release(key);
+    await store.complete(key, {
+      status: c.res.status,
+      contentType: c.res.headers.get("content-type") ?? "application/json",
+      body: await c.res.clone().text(),
+    });
   };

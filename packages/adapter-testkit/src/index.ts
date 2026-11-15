@@ -9,6 +9,7 @@ import {
   relayOutbox,
 } from "@free-commerce/core";
 import { describe, expect, it } from "vitest";
+import { discountCases } from "./discounts";
 import { inventoryCases } from "./inventory";
 
 const product = (id: string, title = "Mug") => ({
@@ -37,6 +38,7 @@ const aggregates = {
   products: (id: string, v = 1) => product(id, `Mug ${v}`),
   carts: plain,
   orders: plain,
+  discounts: (id: string, v = 1) => ({ id, code: `CODE-${id}`, v }),
 } as const;
 
 /** @experimental Every `Database` adapter must pass this (in-memory and Postgres alike). */
@@ -75,6 +77,7 @@ export function repositoryConformance(
     }
 
     inventoryCases(make);
+    discountCases(make);
 
     it("commits transaction writes and returns the result", async () => {
       const db = await make();
