@@ -17,7 +17,7 @@ if (!url) {
   afterAll(() => client.end());
   repositoryConformance("postgres", async () => {
     await migrate(client);
-    await client`truncate products, carts, orders`;
+    await client`truncate products, carts, orders, stock, reservations`;
     return createPostgresDatabase(client);
   });
 }

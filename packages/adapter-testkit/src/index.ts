@@ -5,6 +5,7 @@ import {
   type Repository,
 } from "@free-commerce/core";
 import { describe, expect, it } from "vitest";
+import { inventoryCases } from "./inventory";
 
 const product = (id: string, title = "Mug") => ({
   ...createProduct(
@@ -68,6 +69,8 @@ export function repositoryConformance(
         });
       });
     }
+
+    inventoryCases(make);
 
     it("commits transaction writes and returns the result", async () => {
       const db = await make();

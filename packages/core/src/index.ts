@@ -20,6 +20,12 @@ export {
   type VariantInput,
 } from "./catalog/catalog";
 export {
+  createInventory,
+  decideReserveRetry,
+  decideSettle,
+  type ReserveOutcome,
+} from "./inventory/inventory";
+export {
   fulfil,
   LIFECYCLE_TRANSITIONS,
   PAYMENT_TRANSITIONS,
@@ -46,11 +52,14 @@ export type {
   CartRepository,
   Database,
   Entity,
+  InventoryRepository,
   OrderRepository,
   Page,
   ProductRepository,
   Repositories,
   Repository,
+  ReserveResult,
+  SettleResult,
 } from "./repositories";
 export {
   createSagaRunner,

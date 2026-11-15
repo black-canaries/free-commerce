@@ -12,6 +12,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@free-commerce/core": "workspace:*"
+    "@free-commerce/core": "workspace:*",
+    "fast-check": "^4.10.2"
   }
 }

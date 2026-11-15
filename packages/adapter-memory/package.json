@@ -12,7 +12,8 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@free-commerce/core": "workspace:*"
+    "@free-commerce/core": "workspace:*",
+    "@free-commerce/schema": "workspace:*"
   },
   "devDependencies": {
     "@free-commerce/adapter-testkit": "workspace:*"
