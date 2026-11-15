@@ -144,6 +144,12 @@ export type {
   SettleResult,
 } from "./repositories";
 export {
+  type CheckoutDeps,
+  CheckoutError,
+  CheckoutInput,
+  createCheckout,
+} from "./saga/checkout";
+export {
   createSagaRunner,
   type Saga,
   type SagaRun,

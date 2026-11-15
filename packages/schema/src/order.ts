@@ -58,6 +58,15 @@ export const Order = z
     total: Money,
     paid: Money,
     refunded: Money,
+    /** Provider payment that funded the order; refunds go through it. */
+    paymentId: z.string().min(1).optional(),
+    /** What the customer agreed to at checkout. Immediate delivery is recorded only when digital lines were bought. */
+    consents: z
+      .strictObject({
+        termsAcceptedAt: Timestamp,
+        immediateDeliveryAcceptedAt: Timestamp.optional(),
+      })
+      .optional(),
     createdAt: Timestamp,
     updatedAt: Timestamp,
   })
