@@ -20,6 +20,15 @@ export {
   type VariantInput,
 } from "./catalog/catalog";
 export {
+  createEventBus,
+  type DomainEvent,
+  type EventBus,
+  type EventHandler,
+  idempotent,
+  type Outbox,
+  relayOutbox,
+} from "./events/events";
+export {
   createInventory,
   decideReserveRetry,
   decideSettle,

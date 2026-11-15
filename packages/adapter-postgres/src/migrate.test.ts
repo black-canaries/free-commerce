@@ -46,7 +46,7 @@ describe.skipIf(!url)("upgrade migrations", () => {
       { doc: { title: "Mug" } },
     ]);
     expect(await client`select count(*)::int as n from _migrations`).toEqual([
-      { n: 5 },
+      { n: 6 },
     ]);
   });
 });

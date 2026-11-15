@@ -1,16 +1,25 @@
 import {
   type Database,
+  type DomainEvent,
   decideReserveRetry,
   decideSettle,
   type Entity,
   type InventoryRepository,
+  type Outbox,
   type Page,
   type Repositories,
   type Repository,
 } from "@free-commerce/core";
 import { type Reservation, toTimestamp } from "@free-commerce/schema";
-import { and, asc, eq, gt, sql } from "drizzle-orm";
-import { integer, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { and, asc, eq, gt, isNull, sql } from "drizzle-orm";
+import {
+  bigserial,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+} from "drizzle-orm/pg-core";
 import { drizzle } from "drizzle-orm/postgres-js";
 import type { Sql } from "postgres";
 
@@ -19,7 +28,10 @@ const tables = {
   products: docTable("products"),
   carts: docTable("carts"),
   orders: docTable("orders"),
-} satisfies Record<Exclude<keyof Repositories, "inventory">, unknown>;
+} satisfies Record<
+  Exclude<keyof Repositories, "inventory" | "outbox">,
+  unknown
+>;
 
 /** Aggregates are stored whole as JSON documents keyed by id (ADR 0017). */
 function docTable(name: string) {
@@ -32,6 +44,12 @@ function docTable(name: string) {
 const stock = pgTable("stock", {
   variantId: text("variant_id").primaryKey(),
   quantity: integer("quantity").notNull(),
+});
+const outboxTable = pgTable("outbox", {
+  seq: bigserial("seq", { mode: "number" }).primaryKey(),
+  id: text("id").notNull().unique(),
+  event: jsonb("event").notNull(),
+  deliveredAt: timestamp("delivered_at", { withTimezone: true }),
 });
 const reservations = pgTable("reservations", {
   id: text("id").primaryKey(),
@@ -189,11 +207,36 @@ const inventory = (db: Db): InventoryRepository => {
   };
 };
 
+const outbox = (db: Db): Outbox => ({
+  async add(event) {
+    await db
+      .insert(outboxTable)
+      .values({ id: event.id, event })
+      .onConflictDoNothing({ target: outboxTable.id });
+  },
+  async pending(limit) {
+    const rows = await db
+      .select({ event: outboxTable.event })
+      .from(outboxTable)
+      .where(isNull(outboxTable.deliveredAt))
+      .orderBy(asc(outboxTable.seq))
+      .limit(limit);
+    return rows.map((r) => r.event as DomainEvent);
+  },
+  async markDelivered(id) {
+    await db
+      .update(outboxTable)
+      .set({ deliveredAt: sql`now()` })
+      .where(eq(outboxTable.id, id));
+  },
+});
+
 const bind = (db: Db): Repositories => ({
   inventory: inventory(db),
   products: repository(db, tables.products),
   carts: repository(db, tables.carts),
   orders: repository(db, tables.orders),
+  outbox: outbox(db),
 });
 
 /** Arbitrary constant: every transaction takes this lock first, so they run one at a time. */
