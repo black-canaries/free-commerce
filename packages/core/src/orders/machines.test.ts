@@ -1,5 +1,4 @@
 import type {
-  DeliveryType,
   FulfilmentStatus,
   OrderStatus,
   PaymentStatus,
@@ -35,7 +34,11 @@ const PAYMENT: PaymentStatus[] = [
 const usd = (amount: number) => ({ amount, currency: "USD" });
 const ts = "2026-01-01T00:00:00.000Z";
 
-const line = (deliveryType: DeliveryType, quantity = 2, fulfilled = 0) => ({
+const line = (
+  deliveryType: Order["lines"][number]["deliveryType"],
+  quantity = 2,
+  fulfilled = 0,
+) => ({
   id: newId("line"),
   title: "Item",
   deliveryType,

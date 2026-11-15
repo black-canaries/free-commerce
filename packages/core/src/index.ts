@@ -1,4 +1,13 @@
 export {
+  archiveProduct,
+  CatalogError,
+  createProduct,
+  type ProductInput,
+  publishProduct,
+  updateProduct,
+  type VariantInput,
+} from "./catalog/catalog";
+export {
   fulfil,
   LIFECYCLE_TRANSITIONS,
   PAYMENT_TRANSITIONS,

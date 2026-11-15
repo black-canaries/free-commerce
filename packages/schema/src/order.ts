@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DeliveryType } from "./catalog.js";
 import { idSchema } from "./id.js";
 import { Money } from "./money.js";
 import { Timestamp } from "./time.js";
@@ -24,9 +25,6 @@ export const FulfilmentStatus = z.enum([
   "fulfilled",
 ]);
 export type FulfilmentStatus = z.infer<typeof FulfilmentStatus>;
-
-export const DeliveryType = z.enum(["physical", "digital", "none"]);
-export type DeliveryType = z.infer<typeof DeliveryType>;
 
 const count = z.number().int().nonnegative();
 
