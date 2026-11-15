@@ -7,6 +7,11 @@ export {
   updateProduct,
   type VariantInput,
 } from "./catalog/catalog";
+export {
+  createInventory,
+  decideSettle,
+  type ReserveOutcome,
+} from "./inventory/inventory";
 export { ProviderError, type ProviderErrorCode } from "./providers/error";
 export {
   type StorageConfig,
@@ -18,11 +23,13 @@ export type {
   CartRepository,
   Database,
   Entity,
+  InventoryRepository,
   OrderRepository,
   Page,
   ProductRepository,
   Repositories,
   Repository,
+  SettleResult,
 } from "./repositories";
 export {
   createSagaRunner,

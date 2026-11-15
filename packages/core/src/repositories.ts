@@ -1,4 +1,9 @@
-import type { PageQuery, Product } from "@free-commerce/schema";
+import type {
+  PageQuery,
+  Product,
+  Reservation,
+  StockLevel,
+} from "@free-commerce/schema";
 
 /** @experimental Placeholder entity shape; Phase 1 replaces it with the real Zod-derived types. */
 export type Entity = { id: string };
@@ -23,8 +28,48 @@ export type CartRepository<T extends Entity = Entity> = Repository<T>;
 /** @experimental */
 export type OrderRepository<T extends Entity = Entity> = Repository<T>;
 
+/** @experimental `ok: false` reasons: unknown id, commit after expiry, or a final state that disagrees. */
+export type SettleResult =
+  | { ok: true; reservation: Reservation }
+  | { ok: false; reason: "not_found" | "expired" | "conflict" };
+
+/**
+ * @experimental Stock and reservations. `reserve` and `settle` MUST each be atomic (all-or-nothing and
+ * serialised per variant) so concurrent calls can never oversell or double-consume: in SQL, one
+ * transaction that locks the variant's stock row (`SELECT ... FOR UPDATE`, or a conditional `UPDATE`),
+ * then checks and writes. Timestamps are canonical UTC ISO strings, so string order is time order;
+ * a reservation is expired when `expiresAt <= now`, judged at call time, never by a sweeper.
+ */
+export interface InventoryRepository {
+  getStock(variantId: string): Promise<StockLevel | null>;
+  /** Insert or replace the on-hand quantity. */
+  setStock(level: StockLevel): Promise<void>;
+  /** Units held by `active`, unexpired reservations of the variant. */
+  reserved(variantId: string, now: string): Promise<number>;
+  /**
+   * Atomically insert the reservation as `active` if `onHand - reserved(now) >= quantity`
+   * (missing stock is 0), or always when `allowBackorder`. Resolves the stored reservation, or `null`
+   * when stock is insufficient. If `id` already exists, resolves the stored one unchanged (retry-safe).
+   */
+  reserve(
+    reservation: Omit<Reservation, "status">,
+    now: string,
+    allowBackorder: boolean,
+  ): Promise<Reservation | null>;
+  /**
+   * Atomically apply the transition decided by core's `decideSettle`; on the first transition to
+   * `committed` also subtract `quantity` from stock in the same atomic step (never twice).
+   */
+  settle(
+    id: string,
+    to: "committed" | "released",
+    now: string,
+  ): Promise<SettleResult>;
+}
+
 /** @experimental */
 export interface Repositories {
+  inventory: InventoryRepository;
   products: ProductRepository;
   carts: CartRepository;
   orders: OrderRepository;
