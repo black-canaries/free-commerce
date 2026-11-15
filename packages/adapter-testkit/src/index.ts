@@ -38,7 +38,7 @@ const aggregates = {
 /** @experimental Every `Database` adapter must pass this (in-memory and Postgres alike). */
 export function repositoryConformance(
   name: string,
-  make: () => Database,
+  make: () => Database | Promise<Database>,
 ): void {
   describe(`Database conformance: ${name}`, () => {
     for (const [kind, build] of Object.entries(aggregates)) {
@@ -47,18 +47,18 @@ export function repositoryConformance(
           db[kind as keyof typeof aggregates] as Repository<Entity>;
 
         it("round-trips and overwrites by id", async () => {
-          const r = repo(make());
+          const r = repo(await make());
           await r.save(build("a"));
           await r.save(build("a", 2));
           expect(await r.get("a")).toEqual(build("a", 2));
         });
 
         it("get on a missing id resolves null", async () => {
-          expect(await repo(make()).get("missing")).toBeNull();
+          expect(await repo(await make()).get("missing")).toBeNull();
         });
 
         it("lists by id with cursor pagination", async () => {
-          const r = repo(make());
+          const r = repo(await make());
           for (const id of ["c", "a", "d", "b", "e"]) await r.save(build(id));
           const p1 = await r.list({ limit: 2 });
           expect(p1.items.map((i) => i.id)).toEqual(["a", "b"]);
@@ -73,7 +73,7 @@ export function repositoryConformance(
     inventoryCases(make);
 
     it("commits transaction writes and returns the result", async () => {
-      const db = make();
+      const db = await make();
       const out = await db.transaction(async (tx) => {
         await tx.products.save(product("p"));
         await tx.orders.save(plain("o"));
@@ -85,7 +85,7 @@ export function repositoryConformance(
     });
 
     it("rolls back every write and rethrows when the transaction throws", async () => {
-      const db = make();
+      const db = await make();
       await db.products.save(product("keep"));
       const boom = new Error("boom");
       await expect(
@@ -97,6 +97,21 @@ export function repositoryConformance(
       ).rejects.toBe(boom);
       expect(await db.products.get("keep")).toEqual(product("keep"));
       expect(await db.carts.get("c")).toBeNull();
+    });
+
+    it("serialises concurrent transactions (no lost updates)", async () => {
+      const db = await make();
+      const counter = (count: number) => ({ id: "n", count }) as Entity;
+      await db.orders.save(counter(0));
+      const bump = () =>
+        db.transaction(async (tx) => {
+          const row = (await tx.orders.get("n")) as unknown as {
+            count: number;
+          };
+          await tx.orders.save(counter(row.count + 1));
+        });
+      await Promise.all(Array.from({ length: 10 }, bump));
+      expect(await db.orders.get("n")).toEqual(counter(10));
     });
   });
 }

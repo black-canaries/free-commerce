@@ -1,5 +1,6 @@
 import {
   type Database,
+  decideReserveRetry,
   decideSettle,
   type Entity,
   type InventoryRepository,
@@ -68,16 +69,16 @@ const inventory = (state: () => State): InventoryRepository => ({
   async reserve(draft, now, allowBackorder) {
     const s = state();
     const existing = s.reservations.get(draft.id);
-    if (existing) return { ...existing };
+    if (existing) return decideReserveRetry(existing, draft, now);
     const onHand = s.stock.get(draft.variantId)?.quantity ?? 0;
     if (
       !allowBackorder &&
       onHand - held(s, draft.variantId, now) < draft.quantity
     )
-      return null;
+      return { ok: false, reason: "insufficient" };
     const row: Reservation = { ...draft, status: "active" };
     s.reservations.set(row.id, row);
-    return { ...row };
+    return { ok: true, reservation: { ...row } };
   },
   async settle(id, to, now) {
     const s = state();

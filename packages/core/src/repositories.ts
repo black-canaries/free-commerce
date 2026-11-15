@@ -33,6 +33,11 @@ export type SettleResult =
   | { ok: true; reservation: Reservation }
   | { ok: false; reason: "not_found" | "expired" | "conflict" };
 
+/** @experimental `reserve` outcome; `conflict`: the id exists but is not a live, identical hold (see `decideReserveRetry`). */
+export type ReserveResult =
+  | { ok: true; reservation: Reservation }
+  | { ok: false; reason: "insufficient" | "conflict" };
+
 /**
  * @experimental Stock and reservations. `reserve` and `settle` MUST each be atomic (all-or-nothing and
  * serialised per variant) so concurrent calls can never oversell or double-consume: in SQL, one
@@ -48,14 +53,14 @@ export interface InventoryRepository {
   reserved(variantId: string, now: string): Promise<number>;
   /**
    * Atomically insert the reservation as `active` if `onHand - reserved(now) >= quantity`
-   * (missing stock is 0), or always when `allowBackorder`. Resolves the stored reservation, or `null`
-   * when stock is insufficient. If `id` already exists, resolves the stored one unchanged (retry-safe).
+   * (missing stock is 0), or always when `allowBackorder`. If `id` already exists, nothing is written
+   * and core's `decideReserveRetry` decides (retry-safe: only a live, identical hold succeeds).
    */
   reserve(
     reservation: Omit<Reservation, "status">,
     now: string,
     allowBackorder: boolean,
-  ): Promise<Reservation | null>;
+  ): Promise<ReserveResult>;
   /**
    * Atomically apply the transition decided by core's `decideSettle`; on the first transition to
    * `committed` also subtract `quantity` from stock in the same atomic step (never twice).

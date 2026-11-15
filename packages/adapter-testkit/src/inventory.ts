@@ -28,9 +28,9 @@ const variant = (extra: Partial<VariantInput> = {}) =>
   ).variants[0] as ReturnType<typeof createProduct>["variants"][number];
 
 /** Fresh database with `stock` on hand and a controllable clock. */
-const setup = async (make: () => Database, stock: number) => {
+const setup = async (make: Make, stock: number) => {
   let t = Date.UTC(2026, 0, 1);
-  const inv = createInventory(make().inventory, () => new Date(t));
+  const inv = createInventory((await make()).inventory, () => new Date(t));
   await inv.setStock(VARIANT_ID, stock);
   return {
     inv,
@@ -39,12 +39,19 @@ const setup = async (make: () => Database, stock: number) => {
     },
   };
 };
+type Make = () => Database | Promise<Database>;
 const TTL = 60_000;
 const hold = (
   inv: Awaited<ReturnType<typeof setup>>["inv"],
   quantity: number,
   v = variant(),
 ) => inv.reserve({ variant: v, cartId: "cart_1", quantity, ttlMs: TTL });
+const retry = (
+  inv: Awaited<ReturnType<typeof setup>>["inv"],
+  id: string,
+  quantity: number,
+  cartId = "cart_1",
+) => inv.reserve({ variant: variant(), cartId, quantity, ttlMs: TTL, id });
 const reservedOf = async (p: ReturnType<typeof hold>) => {
   const r = await p;
   if (r.status !== "reserved")
@@ -54,7 +61,7 @@ const reservedOf = async (p: ReturnType<typeof hold>) => {
 const numRuns = { numRuns: 50 };
 
 /** Inventory cases, registered inside `repositoryConformance` so every adapter runs them. */
-export function inventoryCases(make: () => Database): void {
+export function inventoryCases(make: Make): void {
   describe("inventory", () => {
     it("holds units, rejects beyond stock, and release frees them", async () => {
       const { inv } = await setup(make, 3);
@@ -107,18 +114,42 @@ export function inventoryCases(make: () => Database): void {
       expect(await inv.release(r.id)).toMatchObject({ ok: true });
     });
 
-    it("retrying a reserve with the same id returns the original", async () => {
+    it("retrying a reserve with the same id returns the original while it is live", async () => {
       const { inv } = await setup(make, 2);
       const first = await reservedOf(hold(inv, 2));
-      const again = await inv.reserve({
-        variant: variant(),
-        cartId: "cart_1",
-        quantity: 2,
-        ttlMs: TTL,
-        id: first.id,
+      expect(await retry(inv, first.id, 2)).toEqual({
+        status: "reserved",
+        reservation: first,
       });
-      expect(again).toEqual({ status: "reserved", reservation: first });
       expect(await inv.available(VARIANT_ID)).toBe(0);
+    });
+
+    it("a retry is a conflict once released, committed, expired or different", async () => {
+      const { inv, advance } = await setup(make, 9);
+      const a = await reservedOf(hold(inv, 2));
+      await inv.release(a.id);
+      expect(await retry(inv, a.id, 2)).toEqual({ status: "conflict" });
+      const b = await reservedOf(hold(inv, 2));
+      await inv.commit(b.id);
+      expect(await retry(inv, b.id, 2)).toEqual({ status: "conflict" });
+      const c = await reservedOf(hold(inv, 2));
+      expect(await retry(inv, c.id, 3)).toEqual({ status: "conflict" });
+      expect(await retry(inv, c.id, 2, "cart_2")).toEqual({
+        status: "conflict",
+      });
+      advance(TTL);
+      expect(await retry(inv, c.id, 2)).toEqual({ status: "conflict" });
+      expect(await inv.available(VARIANT_ID)).toBe(7);
+    });
+
+    it("rejects a non-positive ttl and invalid stock", async () => {
+      const { inv } = await setup(make, 1);
+      for (const ttlMs of [0, -5, 1.5])
+        await expect(
+          inv.reserve({ variant: variant(), cartId: "c", quantity: 1, ttlMs }),
+        ).rejects.toThrow(RangeError);
+      await expect(inv.setStock(VARIANT_ID, 1.5)).rejects.toThrow();
+      await expect(inv.setStock("nope", 1)).rejects.toThrow();
     });
 
     it("honours allowBackorder and lets committed stock go negative", async () => {
