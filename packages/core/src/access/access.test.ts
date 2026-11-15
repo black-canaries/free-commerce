@@ -7,11 +7,15 @@ describe("summarize", () => {
       role: "staff",
       email: "a@b.c",
       apiKey: "sk_x",
+      street: "1 High St",
+      iban: "GB00",
       note: "x".repeat(500),
       deep: { a: { b: { c: 1 } } },
     }) as Record<string, unknown>;
     expect(out.email).toBe("[redacted]");
     expect(out.apiKey).toBe("[redacted]");
+    expect(out.street).toBe("[redacted]");
+    expect(out.iban).toBe("[redacted]");
     expect(out.role).toBe("staff");
     expect((out.note as string).length).toBeLessThan(100);
     expect(JSON.stringify(out.deep)).toContain("[truncated]");

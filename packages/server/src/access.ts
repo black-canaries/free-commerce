@@ -38,11 +38,13 @@ export const authorize =
     await next();
   };
 
-/** Handlers call this to say what they changed; the entry is redacted and bounded by core `summarize`. */
-export const recordChange = (
-  c: Context<AppEnv>,
-  change: { target: string; before?: unknown; after?: unknown },
-): void => c.set("change", change);
+/** The actor of the current request, as stored on audit entries. */
+export const actorOf = (c: Context<AppEnv>) => {
+  const { admin, key } = c.var.auth;
+  return admin
+    ? ({ type: "user", id: admin.userId } as const)
+    : ({ type: "key", id: key?.id ?? "unknown" } as const);
+};
 
 /**
  * Every successful admin mutation appends one audit entry (who, what, when, before/after). Replays served
@@ -54,18 +56,14 @@ export const audited =
   async (c, next) => {
     if (READ.has(c.req.method) || isAuthRoute(c.req.path)) return next();
     await next();
-    if (c.res.status >= 400) return;
-    const { admin, key } = c.var.auth;
-    const actor = admin
-      ? ({ type: "user", id: admin.userId } as const)
-      : ({ type: "key", id: key?.id ?? "unknown" } as const);
+    if (c.res.status >= 400 || c.var.audited) return;
     const change = c.var.change;
     await deps.db.audit.append(
       newAuditEntry(
         {
-          actor,
+          actor: actorOf(c),
           action: `${c.req.method} ${c.req.routePath}`,
-          target: change?.target ?? c.req.path,
+          target: change?.target ?? c.req.routePath,
           before: change?.before,
           after: change?.after,
         },

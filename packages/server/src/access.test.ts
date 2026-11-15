@@ -172,6 +172,76 @@ describe("team", () => {
   });
 });
 
+describe("team safety", () => {
+  const put = (
+    t: T,
+    who: { h: Record<string, string> },
+    id: string,
+    k: string,
+  ) =>
+    t.app.fetch(
+      new Request(`http://x/admin/team/${id}`, {
+        method: "PUT",
+        body: JSON.stringify({ role: "owner" }),
+        headers: {
+          ...who.h,
+          "content-type": "application/json",
+          "idempotency-key": k,
+        },
+      }),
+    );
+
+  it("only existing admin users can be given a role", async () => {
+    const t = await setup();
+    const owner = await as(t, "owner");
+    expect((await put(t, owner, "usr_typo", "a")).status).toBe(404);
+    expect(await t.db.roles.get("usr_typo")).toBeNull();
+    const reg = await t.app.request("/store/auth/register", {
+      method: "POST",
+      body: JSON.stringify({
+        email: "c@example.com",
+        password: "correct horse",
+        name: "C",
+        mode: "bearer",
+      }),
+      headers: { ...t.pk, "content-type": "application/json" },
+    });
+    const { userId } = (await reg.json()) as { userId: string };
+    expect((await put(t, owner, userId, "b")).status).toBe(404);
+  });
+
+  it("a role row for a user that no longer exists does not count as an owner", async () => {
+    const t = await setup();
+    const owner = await as(t, "owner");
+    await t.db.roles.save({ id: "usr_gone", role: "owner" });
+    const demote = await t.app.fetch(
+      new Request(`http://x/admin/team/${owner.userId}`, {
+        method: "PUT",
+        body: JSON.stringify({ role: "staff" }),
+        headers: {
+          ...owner.h,
+          "content-type": "application/json",
+          "idempotency-key": "d",
+        },
+      }),
+    );
+    expect(demote.status).toBe(409);
+  });
+
+  it("a failing audit append rolls the role change back", async () => {
+    const t = await setup();
+    const owner = await as(t, "owner");
+    const staff = await as(t, "staff");
+    t.db.audit.append = async () => {
+      throw new Error("disk full");
+    };
+    const tx = t.db.transaction.bind(t.db);
+    t.db.transaction = (fn) => tx((r) => fn({ ...r, audit: t.db.audit }));
+    expect((await put(t, owner, staff.userId, "e")).status).toBe(500);
+    expect((await t.db.roles.get(staff.userId))?.role).toBe("staff");
+  });
+});
+
 describe("audit log", () => {
   it("every successful admin mutation is recorded, with redacted before/after", async () => {
     const t = await setup();

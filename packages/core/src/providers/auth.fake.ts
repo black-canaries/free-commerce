@@ -34,6 +34,11 @@ export function createFakeAuth(
       const s = sessions.get(k(realm, token));
       return s && s.expiresAt > now() ? { userId: s.userId } : null;
     },
+    async userExists(realm, userId) {
+      return [...users.entries()].some(
+        ([key, u]) => key.startsWith(`${realm}:`) && u.id === userId,
+      );
+    },
     async signOut(realm, token) {
       sessions.delete(k(realm, token));
     },

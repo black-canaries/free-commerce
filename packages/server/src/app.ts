@@ -2,6 +2,7 @@ import {
   type ApiKeyStore,
   type AuthProvider,
   type Database,
+  newAuditEntry,
   type Page,
   type Repository,
   ROLES,
@@ -11,7 +12,7 @@ import { type Order, PageQuery } from "@free-commerce/schema";
 import { Hono, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
-import { audited, authorize, recordChange } from "./access.js";
+import { actorOf, audited, authorize } from "./access.js";
 import {
   type AuthDeps,
   authenticate,
@@ -55,15 +56,22 @@ export interface AppDeps {
   now?: () => number;
 }
 
-/** Pages through the roles until an owner other than `id` turns up. */
+/** Pages through the roles until an owner other than `id` turns up who still exists as an admin user. */
 const hasOtherOwner = async (
   roles: Repository<RoleAssignment>,
+  auth: AuthProvider,
   id: string,
 ): Promise<boolean> => {
   let cursor: string | undefined;
   do {
     const page: Page<RoleAssignment> = await roles.list({ limit: 100, cursor });
-    if (page.items.some((r) => r.role === "owner" && r.id !== id)) return true;
+    for (const r of page.items)
+      if (
+        r.role === "owner" &&
+        r.id !== id &&
+        (await auth.userExists("admin", r.id))
+      )
+        return true;
     cursor = page.nextCursor ?? undefined;
   } while (cursor);
   return false;
@@ -203,20 +211,32 @@ export const createApp = (deps: AppDeps) => {
       await c.req.json().catch(() => undefined),
     );
     const id = c.req.param("userId");
-    const before = await deps.db.transaction(async (tx) => {
-      const current = await tx.roles.get(id);
-      if (current?.role === "owner" && role !== "owner") {
-        if (!(await hasOtherOwner(tx.roles, id)))
-          throw new HttpError("conflict", "Cannot remove the last owner");
-      }
+    if (!(await deps.auth.userExists("admin", id)))
+      throw new HttpError("not_found", "No such admin user");
+    // Role and audit entry commit together; the middleware then skips its own entry.
+    await deps.db.transaction(async (tx) => {
+      const before = (await tx.roles.get(id))?.role;
+      if (
+        before === "owner" &&
+        role !== "owner" &&
+        !(await hasOtherOwner(tx.roles, deps.auth, id))
+      )
+        throw new HttpError("conflict", "Cannot remove the last owner");
       await tx.roles.save({ id, role });
-      return current?.role;
+      await tx.audit.append(
+        newAuditEntry(
+          {
+            actor: actorOf(c),
+            action: `${c.req.method} ${c.req.routePath}`,
+            target: `team/${id}`,
+            before: { role: before ?? null },
+            after: { role },
+          },
+          now(),
+        ),
+      );
     });
-    recordChange(c, {
-      target: `team/${id}`,
-      before: { role: before ?? null },
-      after: { role },
-    });
+    c.set("audited", true);
     return c.json({ id, role });
   });
 

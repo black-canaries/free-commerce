@@ -32,6 +32,8 @@ export interface AuthProvider {
     realm: AuthRealm,
     token: string,
   ): Promise<{ userId: string } | null>;
+  /** Whether `userId` is a user of that realm (never true across realms). */
+  userExists(realm: AuthRealm, userId: string): Promise<boolean>;
   /** Idempotent: an unknown token is a no-op. */
   signOut(realm: AuthRealm, token: string): Promise<void>;
 }

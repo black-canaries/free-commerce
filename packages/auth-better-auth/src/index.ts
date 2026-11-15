@@ -91,6 +91,10 @@ export function createBetterAuth(config: BetterAuthConfig): AuthProvider {
         .catch(() => null);
       return session ? { userId: session.user.id } : null;
     },
+    async userExists(realm, userId) {
+      const { internalAdapter } = await instances[realm].$context;
+      return (await internalAdapter.findUserById(userId)) !== null;
+    },
     async signOut(realm, token) {
       await instances[realm].api
         .signOut({ headers: bearerHeaders(token) })

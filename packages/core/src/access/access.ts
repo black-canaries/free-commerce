@@ -99,14 +99,15 @@ export interface AuditRepository {
 }
 
 const SENSITIVE =
-  /pass|secret|token|hash|key|card|cvv|email|phone|address|name|birth|ssn|authorization|cookie/i;
+  /pass|pwd|secret|token|hash|key|card|cvv|iban|account|email|phone|mobile|address|street|city|zip|post|line\d|name|birth|dob|ssn|otp|jwt|signature|session|authorization|cookie|note|comment|message|body|text|description/i;
 const MAX_STRING = 80;
 const MAX_KEYS = 20;
 const MAX_DEPTH = 3;
 
 /**
  * Bounded, redacted copy for audit entries: sensitive-looking keys are masked, long strings cut,
- * depth and width capped. A deny-list is a safety net; callers should still pass only what they mean to log.
+ * depth and width capped. A deny-list is only a safety net: handlers must pass just the fields they mean to log
+ * (ids, statuses, enums), never request bodies or free text.
  */
 export const summarize = (value: unknown, depth = 0): unknown => {
   if (typeof value === "string")
