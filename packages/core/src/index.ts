@@ -52,6 +52,18 @@ export {
 } from "./pricing/pricing";
 export { ProviderError, type ProviderErrorCode } from "./providers/error";
 export {
+  createFlatRateShipping,
+  createWeightBasedShipping,
+  type FlatRateConfig,
+  flatRateConfigSchema,
+  type ShippingOption,
+  type ShippingProvider,
+  type ShippingQuoteInput,
+  shippingOptions,
+  type WeightBasedConfig,
+  weightBasedConfigSchema,
+} from "./providers/shipping";
+export {
   type StorageConfig,
   type StorageProvider,
   storageConfigSchema,
