@@ -1,3 +1,5 @@
+import type { ApiKey } from "@free-commerce/core";
+
 export type LogEntry = Record<string, unknown>;
 /** Receives one structured entry per call; the default writes a JSON line to the console. */
 export type Logger = (entry: LogEntry) => void;
@@ -13,14 +15,29 @@ export interface Tracer {
 }
 
 export interface StoredResponse {
-  fingerprint: string;
   status: number;
   contentType: string;
   body: string;
 }
+/** `response` is null while the first request is still running. */
+export interface IdempotencyEntry {
+  fingerprint: string;
+  response: StoredResponse | null;
+}
+/** Keys passed in are already scoped to the caller; stores must not interpret them. */
 export interface IdempotencyStore {
-  get(key: string): Promise<StoredResponse | undefined>;
-  set(key: string, value: StoredResponse): Promise<void>;
+  /**
+   * Atomically claims `key` for this request: resolves `undefined` if the caller now owns it, otherwise the
+   * existing entry. Two concurrent first requests can never both be told they own the key.
+   */
+  claim(
+    key: string,
+    fingerprint: string,
+  ): Promise<IdempotencyEntry | undefined>;
+  /** Stores the response of the owner so later requests replay it. */
+  complete(key: string, response: StoredResponse): Promise<void>;
+  /** Gives the key up (5xx or crash) so the client can retry. */
+  release(key: string): Promise<void>;
 }
 
 export interface RateLimitStore {
@@ -31,4 +48,13 @@ export interface RateLimitStore {
   ): Promise<{ count: number; resetAt: number }>;
 }
 
-export type AppEnv = { Variables: { requestId: string; log: Logger } };
+/** Who is calling; filled by the auth middleware on `/store` and `/admin`. */
+export interface AuthState {
+  key?: ApiKey;
+  admin?: { userId: string; viaCookie: boolean };
+  customer?: { userId: string };
+}
+
+export type AppEnv = {
+  Variables: { requestId: string; log: Logger; auth: AuthState };
+};

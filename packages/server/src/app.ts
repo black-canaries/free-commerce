@@ -1,6 +1,17 @@
-import { PageQuery } from "@free-commerce/schema";
-import { Hono } from "hono";
+import type { ApiKeyStore, AuthProvider } from "@free-commerce/core";
+import { type Order, PageQuery } from "@free-commerce/schema";
+import { Hono, type MiddlewareHandler } from "hono";
+import { cors } from "hono/cors";
 import { z } from "zod";
+import {
+  type AuthDeps,
+  authenticate,
+  isAuthRoute,
+  mountAuthRoutes,
+  requireAdmin,
+  requireCustomer,
+  requireStoreKey,
+} from "./auth.js";
 import { errorBody, HttpError, parse } from "./errors.js";
 import { consoleLogger, noopTracer } from "./fakes.js";
 import { idempotency, rateLimit, requestContext } from "./middleware.js";
@@ -17,6 +28,13 @@ export interface AppDeps {
   checkDb: () => Promise<void>;
   idempotency: IdempotencyStore;
   rateLimit: RateLimitStore;
+  auth: AuthProvider;
+  apiKeys: ApiKeyStore;
+  /** Orders belonging to a customer (their `cus_` id); this is what keeps customers to their own orders. */
+  customerOrders: (customerId: string) => Promise<Order[]>;
+  /** Browser origins of storefronts and the admin app (CORS, and CSRF check for cookie-authenticated admin writes). */
+  allowedOrigins?: string[];
+  cookies?: AuthDeps["cookies"];
   /** Requests per window per client on `/store` and `/admin`. */
   rateLimitOptions?: { limit: number; windowMs: number };
   logger?: Logger;
@@ -29,7 +47,15 @@ export const createApp = (deps: AppDeps) => {
   const now = deps.now ?? Date.now;
   const app = new Hono<AppEnv>();
 
-  // Order: context (id, span, log) -> rate limit -> idempotency -> handler.
+  const authDeps: AuthDeps = {
+    auth: deps.auth,
+    apiKeys: deps.apiKeys,
+    cookies: deps.cookies,
+    allowedOrigins: deps.allowedOrigins ?? [],
+    now,
+  };
+
+  // Order: context -> CORS -> rate limit -> credentials -> guard -> idempotency -> handler.
   app.use(
     requestContext(
       deps.logger ?? consoleLogger,
@@ -37,14 +63,55 @@ export const createApp = (deps: AppDeps) => {
       now,
     ),
   );
+  app.use(
+    cors({
+      origin: (origin) =>
+        authDeps.allowedOrigins.includes(origin) ? origin : null,
+      credentials: true,
+      allowHeaders: [
+        "content-type",
+        "authorization",
+        "x-api-key",
+        "idempotency-key",
+        "x-request-id",
+      ],
+      exposeHeaders: ["x-request-id", "idempotent-replayed", "retry-after"],
+    }),
+  );
   const limits = rateLimit(
     deps.rateLimit,
     deps.rateLimitOptions ?? { limit: 120, windowMs: 60_000 },
     now,
   );
-  for (const group of ["/store/*", "/admin/*"]) {
-    app.use(group, limits, idempotency(deps.idempotency));
-  }
+  // Credential guessing is throttled harder than the API at large; this is the only brute-force defence for logins.
+  const authLimits = rateLimit(
+    deps.rateLimit,
+    { limit: 10, windowMs: 60_000 },
+    now,
+    "auth",
+  );
+  const idem = idempotency(deps.idempotency);
+  // Login, register and logout are exempt from idempotency: replaying them would store a session token.
+  const unlessAuthRoute: MiddlewareHandler<AppEnv> = (c, next) =>
+    isAuthRoute(c.req.path) ? next() : idem(c, next);
+  app.use("/store/auth/*", authLimits);
+  app.use("/admin/auth/*", authLimits);
+  app.use(
+    "/store/*",
+    limits,
+    authenticate(authDeps, "customer"),
+    requireStoreKey,
+    unlessAuthRoute,
+  );
+  app.use(
+    "/admin/*",
+    limits,
+    authenticate(authDeps, "admin"),
+    requireAdmin(authDeps),
+    unlessAuthRoute,
+  );
+  mountAuthRoutes(app, authDeps, "customer");
+  mountAuthRoutes(app, authDeps, "admin");
 
   app.get("/health", (c) => c.json({ status: "ok" }));
   app.get("/ready", async (c) => {
@@ -68,6 +135,16 @@ export const createApp = (deps: AppDeps) => {
       await c.req.json().catch(() => undefined),
     );
     return c.json(body);
+  });
+
+  store.get("/orders", requireCustomer, async (c) =>
+    c.json(await deps.customerOrders(c.var.auth.customer?.userId ?? "")),
+  );
+  store.get("/orders/:id", requireCustomer, async (c) => {
+    const orders = await deps.customerOrders(c.var.auth.customer?.userId ?? "");
+    const order = orders.find((o) => o.id === c.req.param("id"));
+    if (!order) throw new HttpError("not_found", "Order not found");
+    return c.json(order);
   });
 
   const admin = app.basePath("/admin");

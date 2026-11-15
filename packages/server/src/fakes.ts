@@ -1,18 +1,26 @@
 import type {
+  IdempotencyEntry,
   IdempotencyStore,
   Logger,
   RateLimitStore,
-  StoredResponse,
   Tracer,
 } from "./types.js";
 
 /** Fakes for tests and single-process dev. Unbounded and not shared across instances: not for production. */
 export const memoryIdempotencyStore = (): IdempotencyStore => {
-  const map = new Map<string, StoredResponse>();
+  const map = new Map<string, IdempotencyEntry>();
   return {
-    get: async (key) => map.get(key),
-    set: async (key, value) => {
-      map.set(key, value);
+    claim: async (key, fingerprint) => {
+      const existing = map.get(key);
+      if (!existing) map.set(key, { fingerprint, response: null });
+      return existing;
+    },
+    complete: async (key, response) => {
+      const entry = map.get(key);
+      if (entry) entry.response = response;
+    },
+    release: async (key) => {
+      map.delete(key);
     },
   };
 };
