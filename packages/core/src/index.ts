@@ -20,6 +20,16 @@ export {
   type VariantInput,
 } from "./catalog/catalog";
 export {
+  applyDiscount,
+  type DiscountEffect,
+  DiscountError,
+  type DiscountReason,
+  normalizeCode,
+  redeemDiscount,
+  releaseDiscount,
+  usageRefusal,
+} from "./discounts/discounts";
+export {
   createEventBus,
   type DomainEvent,
   type EventBus,
@@ -72,6 +82,7 @@ export { isSafeKey, newStorageKey, validateUpload } from "./providers/upload";
 export type {
   CartRepository,
   Database,
+  DiscountRepository,
   Entity,
   InventoryRepository,
   OrderRepository,

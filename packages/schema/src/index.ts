@@ -2,6 +2,7 @@ export * from "./address.js";
 export * from "./cart.js";
 export * from "./catalog.js";
 export * from "./customer.js";
+export * from "./discount.js";
 export * from "./errors.js";
 export * from "./id.js";
 export * from "./inventory.js";

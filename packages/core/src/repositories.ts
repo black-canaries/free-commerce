@@ -1,4 +1,5 @@
 import type {
+  DiscountCode,
   PageQuery,
   Product,
   Reservation,
@@ -73,8 +74,35 @@ export interface InventoryRepository {
   ): Promise<SettleResult>;
 }
 
+/**
+ * @experimental Discount codes plus redemption counting. `redeem` MUST be atomic and serialised per
+ * code (SQL: advisory lock on the code, then count, check limits, insert) so concurrent orders can
+ * never exceed `usageLimit` or `perCustomerLimit`. Redemptions are keyed by `redemptionId` (the order
+ * id): redeeming an existing id succeeds without counting twice; `release` deletes it. `save` rejects
+ * a `code` already used by another id.
+ */
+export interface DiscountRepository extends Repository<DiscountCode> {
+  /** `code` is upper-case (see `normalizeCode`). */
+  getByCode(code: string): Promise<DiscountCode | null>;
+  /** Redemptions of the code overall and by `customerKey` (0 when omitted). */
+  usage(
+    codeId: string,
+    customerKey?: string,
+  ): Promise<{ total: number; customer: number }>;
+  redeem(
+    codeId: string,
+    redemptionId: string,
+    customerKey?: string,
+  ): Promise<
+    | { ok: true }
+    | { ok: false; reason: "not_found" | "usage_limit" | "customer_limit" }
+  >;
+  release(redemptionId: string): Promise<void>;
+}
+
 /** @experimental */
 export interface Repositories {
+  discounts: DiscountRepository;
   inventory: InventoryRepository;
   products: ProductRepository;
   carts: CartRepository;
