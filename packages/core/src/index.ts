@@ -80,6 +80,18 @@ export type {
 } from "./providers/auth";
 export { ProviderError, type ProviderErrorCode } from "./providers/error";
 export {
+  assertChargeable,
+  PAYMENT_STATE_TRANSITIONS,
+  type Payment,
+  type PaymentAction,
+  type PaymentEvent,
+  type PaymentProvider,
+  type PaymentState,
+  paymentEventSchema,
+  type Refund,
+} from "./providers/payment";
+export { createManualPayments } from "./providers/payment.manual";
+export {
   offsetOf,
   type SearchDoc,
   type SearchProvider,
