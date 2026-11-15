@@ -1,4 +1,17 @@
 export {
+  API_SCOPES,
+  type ApiKey,
+  ApiKeyError,
+  type ApiKeyStore,
+  type ApiKeyType,
+  type ApiScope,
+  createApiKey,
+  type NewApiKey,
+  revokeApiKey,
+  rotateApiKey,
+  verifyApiKey,
+} from "./auth/apikeys";
+export {
   addLine,
   CartError,
   type CartTotals,
@@ -50,6 +63,11 @@ export {
   PricingError,
   resolvePrice,
 } from "./pricing/pricing";
+export type {
+  AuthProvider,
+  AuthRealm,
+  AuthSession,
+} from "./providers/auth";
 export { ProviderError, type ProviderErrorCode } from "./providers/error";
 export {
   createFlatRateShipping,

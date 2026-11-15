@@ -12,6 +12,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@free-commerce/core": "workspace:*",
     "@free-commerce/schema": "workspace:*",
     "hono": "4.13.14",
     "zod": "4.6.7"
