@@ -4,6 +4,7 @@ export * from "./catalog.js";
 export * from "./customer.js";
 export * from "./errors.js";
 export * from "./id.js";
+export * from "./inventory.js";
 export * from "./money.js";
 export * from "./order.js";
 export * from "./page.js";

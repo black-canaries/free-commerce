@@ -1,4 +1,10 @@
-import type { PageQuery, Product } from "@free-commerce/schema";
+import type {
+  PageQuery,
+  Product,
+  Reservation,
+  StockLevel,
+} from "@free-commerce/schema";
+import type { Outbox } from "./events/events";
 
 /** @experimental Placeholder entity shape; Phase 1 replaces it with the real Zod-derived types. */
 export type Entity = { id: string };
@@ -23,11 +29,58 @@ export type CartRepository<T extends Entity = Entity> = Repository<T>;
 /** @experimental */
 export type OrderRepository<T extends Entity = Entity> = Repository<T>;
 
+/** @experimental `ok: false` reasons: unknown id, commit after expiry, or a final state that disagrees. */
+export type SettleResult =
+  | { ok: true; reservation: Reservation }
+  | { ok: false; reason: "not_found" | "expired" | "conflict" };
+
+/** @experimental `reserve` outcome; `conflict`: the id exists but is not a live, identical hold (see `decideReserveRetry`). */
+export type ReserveResult =
+  | { ok: true; reservation: Reservation }
+  | { ok: false; reason: "insufficient" | "conflict" };
+
+/**
+ * @experimental Stock and reservations. `reserve` and `settle` MUST each be atomic (all-or-nothing and
+ * serialised per variant) so concurrent calls can never oversell or double-consume: in SQL, one
+ * transaction that locks the variant's stock row (`SELECT ... FOR UPDATE`, or a conditional `UPDATE`),
+ * then checks and writes. Timestamps are canonical UTC ISO strings, so string order is time order;
+ * a reservation is expired when `expiresAt <= now`, judged at call time, never by a sweeper.
+ */
+export interface InventoryRepository {
+  getStock(variantId: string): Promise<StockLevel | null>;
+  /** Insert or replace the on-hand quantity. */
+  setStock(level: StockLevel): Promise<void>;
+  /** Units held by `active`, unexpired reservations of the variant. */
+  reserved(variantId: string, now: string): Promise<number>;
+  /**
+   * Atomically insert the reservation as `active` if `onHand - reserved(now) >= quantity`
+   * (missing stock is 0), or always when `allowBackorder`. If `id` already exists, nothing is written
+   * and core's `decideReserveRetry` decides (retry-safe: only a live, identical hold succeeds).
+   */
+  reserve(
+    reservation: Omit<Reservation, "status">,
+    now: string,
+    allowBackorder: boolean,
+  ): Promise<ReserveResult>;
+  /**
+   * Atomically apply the transition decided by core's `decideSettle`; on the first transition to
+   * `committed` also subtract `quantity` from stock in the same atomic step (never twice).
+   */
+  settle(
+    id: string,
+    to: "committed" | "released",
+    now: string,
+  ): Promise<SettleResult>;
+}
+
 /** @experimental */
 export interface Repositories {
+  inventory: InventoryRepository;
   products: ProductRepository;
   carts: CartRepository;
   orders: OrderRepository;
+  /** Written in the same transaction as the domain change. */
+  outbox: Outbox;
 }
 
 /**

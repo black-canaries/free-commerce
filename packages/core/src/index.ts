@@ -33,6 +33,21 @@ export {
   type VariantInput,
 } from "./catalog/catalog";
 export {
+  createEventBus,
+  type DomainEvent,
+  type EventBus,
+  type EventHandler,
+  idempotent,
+  type Outbox,
+  relayOutbox,
+} from "./events/events";
+export {
+  createInventory,
+  decideReserveRetry,
+  decideSettle,
+  type ReserveOutcome,
+} from "./inventory/inventory";
+export {
   fulfil,
   LIFECYCLE_TRANSITIONS,
   PAYMENT_TRANSITIONS,
@@ -55,6 +70,18 @@ export type {
 } from "./providers/auth";
 export { ProviderError, type ProviderErrorCode } from "./providers/error";
 export {
+  createFlatRateShipping,
+  createWeightBasedShipping,
+  type FlatRateConfig,
+  flatRateConfigSchema,
+  type ShippingOption,
+  type ShippingProvider,
+  type ShippingQuoteInput,
+  shippingOptions,
+  type WeightBasedConfig,
+  weightBasedConfigSchema,
+} from "./providers/shipping";
+export {
   type StorageConfig,
   type StorageProvider,
   storageConfigSchema,
@@ -64,11 +91,14 @@ export type {
   CartRepository,
   Database,
   Entity,
+  InventoryRepository,
   OrderRepository,
   Page,
   ProductRepository,
   Repositories,
   Repository,
+  ReserveResult,
+  SettleResult,
 } from "./repositories";
 export {
   createSagaRunner,

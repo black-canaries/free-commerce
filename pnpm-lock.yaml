@@ -38,6 +38,9 @@ importers:
       '@free-commerce/core':
         specifier: workspace:*
         version: link:../core
+      '@free-commerce/schema':
+        specifier: workspace:*
+        version: link:../schema
     devDependencies:
       '@free-commerce/adapter-testkit':
         specifier: workspace:*
@@ -48,6 +51,9 @@ importers:
       '@free-commerce/core':
         specifier: workspace:*
         version: link:../core
+      '@free-commerce/schema':
+        specifier: workspace:*
+        version: link:../schema
       drizzle-orm:
         specifier: 0.45.4
         version: 0.45.4(kysely@0.29.9)(postgres@4.1.1)
@@ -64,6 +70,9 @@ importers:
       '@free-commerce/core':
         specifier: workspace:*
         version: link:../core
+      fast-check:
+        specifier: ^4.10.2
+        version: 4.10.2
 
   packages/address:
     dependencies:
