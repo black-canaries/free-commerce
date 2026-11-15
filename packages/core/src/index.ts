@@ -1,4 +1,16 @@
 export {
+  addLine,
+  CartError,
+  type CartTotals,
+  cartTotals,
+  createCart,
+  getCart,
+  newCart,
+  removeLine,
+  requiresShipping,
+  updateLine,
+} from "./cart/cart";
+export {
   archiveProduct,
   CatalogError,
   createProduct,
