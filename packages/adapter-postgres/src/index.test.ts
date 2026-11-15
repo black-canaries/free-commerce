@@ -20,7 +20,7 @@ if (!url) {
   afterAll(() => client.end());
   const make = async () => {
     await migrate(client);
-    await client`truncate products, carts, orders, outbox`;
+    await client`truncate products, carts, orders, stock, reservations, outbox`;
     return createPostgresDatabase(client);
   };
   repositoryConformance("postgres", make);

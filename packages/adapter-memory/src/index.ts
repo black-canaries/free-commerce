@@ -1,23 +1,33 @@
-import type {
-  Database,
-  DomainEvent,
-  Entity,
-  Outbox,
-  Repositories,
-  Repository,
+import {
+  type Database,
+  type DomainEvent,
+  decideReserveRetry,
+  decideSettle,
+  type Entity,
+  type InventoryRepository,
+  type Outbox,
+  type Repositories,
+  type Repository,
 } from "@free-commerce/core";
+import type { Reservation, StockLevel } from "@free-commerce/schema";
 
-type Docs = Omit<Repositories, "outbox">;
 type State = {
-  [K in keyof Docs]: Docs[K] extends Repository<infer T>
-    ? Map<string, T>
-    : never;
-} & { outbox: Map<string, { event: DomainEvent; delivered: boolean }> };
+  [K in Exclude<
+    keyof Repositories,
+    "inventory" | "outbox"
+  >]: Repositories[K] extends Repository<infer T> ? Map<string, T> : never;
+} & {
+  stock: Map<string, StockLevel>;
+  reservations: Map<string, Reservation>;
+  outbox: Map<string, { event: DomainEvent; delivered: boolean }>;
+};
 
 const emptyState = (): State => ({
   products: new Map(),
   carts: new Map(),
   orders: new Map(),
+  stock: new Map(),
+  reservations: new Map(),
   outbox: new Map(),
 });
 
@@ -43,6 +53,57 @@ const repository = <T extends Entity>(
   },
 });
 
+const held = (s: State, variantId: string, now: string) =>
+  [...s.reservations.values()]
+    .filter(
+      (r) =>
+        r.variantId === variantId && r.status === "active" && r.expiresAt > now,
+    )
+    .reduce((sum, r) => sum + r.quantity, 0);
+
+// Each method runs synchronously after its first await-free check, so it is atomic on the JS event loop.
+const inventory = (state: () => State): InventoryRepository => ({
+  async getStock(variantId) {
+    const row = state().stock.get(variantId);
+    return row ? { ...row } : null;
+  },
+  async setStock(level) {
+    state().stock.set(level.variantId, { ...level });
+  },
+  async reserved(variantId, now) {
+    return held(state(), variantId, now);
+  },
+  async reserve(draft, now, allowBackorder) {
+    const s = state();
+    const existing = s.reservations.get(draft.id);
+    if (existing) return decideReserveRetry(existing, draft, now);
+    const onHand = s.stock.get(draft.variantId)?.quantity ?? 0;
+    if (
+      !allowBackorder &&
+      onHand - held(s, draft.variantId, now) < draft.quantity
+    )
+      return { ok: false, reason: "insufficient" };
+    const row: Reservation = { ...draft, status: "active" };
+    s.reservations.set(row.id, row);
+    return { ok: true, reservation: { ...row } };
+  },
+  async settle(id, to, now) {
+    const s = state();
+    const before = s.reservations.get(id);
+    const out = decideSettle(before, to, now);
+    if (out.ok && before && before.status !== to) {
+      s.reservations.set(id, out.reservation);
+      if (to === "committed")
+        s.stock.set(before.variantId, {
+          variantId: before.variantId,
+          quantity:
+            (s.stock.get(before.variantId)?.quantity ?? 0) - before.quantity,
+        });
+    }
+    return out.ok ? { ok: true, reservation: { ...out.reservation } } : out;
+  },
+});
+
 /** Map insertion order is the outbox order. */
 const outbox = (rows: () => State["outbox"]): Outbox => ({
   async add(event) {
@@ -62,6 +123,7 @@ const outbox = (rows: () => State["outbox"]): Outbox => ({
 });
 
 const bind = (state: () => State): Repositories => ({
+  inventory: inventory(state),
   products: repository(() => state().products),
   carts: repository(() => state().carts),
   orders: repository(() => state().orders),
@@ -83,6 +145,8 @@ export function createMemoryDatabase(): Database {
           products: new Map(state.products),
           carts: new Map(state.carts),
           orders: new Map(state.orders),
+          stock: new Map(state.stock),
+          reservations: new Map(state.reservations),
           outbox: new Map([...state.outbox].map(([k, v]) => [k, { ...v }])),
         };
         const result = await fn(bind(() => copy));
