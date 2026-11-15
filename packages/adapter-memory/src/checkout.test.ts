@@ -3,6 +3,7 @@ import {
   createInventory,
   type PaymentProvider,
   ProviderError,
+  type SagaStore,
 } from "@free-commerce/core";
 import {
   createFakePayments,
@@ -32,7 +33,14 @@ type Point =
   | "timeout";
 
 function world(
-  opts: { qty?: number; price?: number; point?: Point; code?: boolean } = {},
+  opts: {
+    qty?: number;
+    price?: number;
+    point?: Point;
+    code?: boolean;
+    short?: boolean;
+    flaky?: boolean;
+  } = {},
 ) {
   const { qty = 2, price = 1500, point = "none" } = opts;
   const db = createMemoryDatabase();
@@ -76,7 +84,10 @@ function world(
     createPayment: async (i) => {
       if (point === "payment")
         throw new ProviderError("fake", "rejected", "boom");
-      const p = await fake.createPayment(i);
+      const amount = opts.short // the provider charges one cent less than asked
+        ? { ...i.amount, amount: i.amount.amount - 1 }
+        : i.amount;
+      const p = await fake.createPayment({ ...i, amount });
       created.push(p.id);
       if (point === "payment-ambiguous" && created.length === 1)
         throw new ProviderError("fake", "rejected", "timeout after create");
@@ -89,11 +100,24 @@ function world(
     },
   };
   const runs = new Map<string, string>();
+  const inner = createFakeSagaStore();
+  let failed = false;
+  const store: SagaStore = {
+    load: (id) => inner.load(id),
+    save: async (run) => {
+      // One lost save right after the order transaction committed.
+      if (opts.flaky && !failed && run.steps["create-order"]) {
+        failed = true;
+        throw new Error("store down");
+      }
+      return inner.save(run);
+    },
+  };
   let orderNo = 0;
   const checkout = createCheckout({
     db,
     payments,
-    store: createFakeSagaStore(),
+    store,
     now,
     variantOf: async (id) => {
       if (point === "reserve") throw new Error("catalog down");
@@ -105,17 +129,15 @@ function world(
       return ++orderNo;
     },
   });
-  const runId = newId("chk");
   const input = {
     cartId: cart.id,
     cartUpdatedAt: cart.updatedAt,
-    total,
     consents: {
       termsAcceptedAt: new Date(START).toISOString(),
       immediateDeliveryAcceptedAt: new Date(START).toISOString(),
     },
     ...(opts.code && {
-      discount: { codeId: "disc_00000000000000000000000000", customerKey: "a" },
+      discount: { code: "SAVE", customerKey: "a" },
     }),
   };
 
@@ -124,7 +146,7 @@ function world(
     fake,
     cart,
     total,
-    runId,
+    runId: checkout.runIdFor(cart.id),
     input,
     checkout,
     created,
@@ -145,10 +167,10 @@ function world(
         } as DiscountCode);
       return w;
     },
-    async start(over: Partial<typeof input> = {}) {
-      const run = await checkout.start(runId, { ...input, ...over });
+    async start(over: Record<string, unknown> = {}) {
+      const run = await checkout.start({ ...input, ...over });
       const id = (run.steps["create-payment"]?.result as { id: string })?.id;
-      if (id) runs.set(id, runId);
+      if (id) runs.set(id, run.id);
       return run;
     },
     paymentId: () => created[0] as string,
@@ -302,7 +324,7 @@ describe("completeCheckout", () => {
     expect(w.created).toHaveLength(1);
     await expectClean(w, "completed");
     await expect(
-      w.start({ total: { amount: 1, currency: "USD" } }),
+      w.start({ cartUpdatedAt: "2026-05-01T00:00:00.000Z" }),
     ).rejects.toThrow(/different input/);
   });
 
@@ -321,6 +343,89 @@ describe("completeCheckout", () => {
       expect(x.created).toHaveLength(0);
       expect(await x.available()).toBe(10);
     }
+  });
+
+  it("prices the cart itself: the caller cannot supply a total", async () => {
+    const w = await world({ price: 1500 }).setup();
+    await expect(
+      w.start({ total: { amount: 1, currency: "USD" } } as never),
+    ).rejects.toThrow();
+    const run = await w.start({ adjustments: { shipping: 500, tax: 100 } });
+    expect(run.status).toBe("paused");
+    const p = await w.fake.retrieve(w.paymentId());
+    expect(p.amount).toEqual({ amount: w.total.amount + 600, currency: "USD" });
+  });
+
+  it("a captured amount that differs from the priced total never becomes an order", async () => {
+    const w = await world({ short: true }).setup();
+    await w.start();
+    await w.confirm(FAKE_TOKENS.ok);
+    const run = await w.deliver();
+    expect(run?.error).toMatch(/payment_not_captured/);
+    expect(await w.orders()).toHaveLength(0);
+  });
+
+  it("a second tab is the same run; a new attempt waits for the previous one to end", async () => {
+    const w = await world().setup();
+    await w.start();
+    await w.start();
+    expect(w.created).toHaveLength(1);
+    await expect(w.start({ attempt: 1 })).rejects.toThrow(
+      /attempt_in_progress/,
+    );
+    await w.confirm(FAKE_TOKENS.declined);
+    await w.deliver();
+    const retry = await w.start({ attempt: 1 });
+    expect(retry.id).not.toBe(w.runId);
+    expect(retry.status).toBe("paused");
+    await w.fake.confirm({
+      idempotencyKey: "again",
+      paymentId: w.created[1] as string,
+      methodToken: FAKE_TOKENS.ok,
+    });
+    const d = w.fake.delivery(w.created[1] as string);
+    const done = await w.checkout.onPaymentEvent(
+      await w.fake.verifyWebhook(d.rawBody, d.headers),
+    );
+    expect(done?.status).toBe("completed");
+    expect(await w.orders()).toHaveLength(1);
+  });
+
+  it("refunds a payment captured while the run gives up, even if the webhook is lost", async () => {
+    const w = await world().setup();
+    await w.start();
+    await w.confirm(FAKE_TOKENS.threeDs);
+    w.advance(31 * MIN);
+    w.fake.resolve(w.paymentId(), "success"); // captured before the sweeper looks
+    expect((await w.checkout.expire(w.runId)).status).toBe("compensated");
+    expect(w.refunded()).toBe(w.total.amount);
+    const late = await world().setup();
+    await late.start();
+    await late.confirm(FAKE_TOKENS.threeDs);
+    late.advance(31 * MIN);
+    await late.checkout.expire(late.runId);
+    late.fake.resolve(late.paymentId(), "success"); // paid after the run ended, webhook lost
+    expect(late.refunded()).toBe(0);
+    await late.checkout.reconcile(late.runId);
+    expect(late.refunded()).toBe(late.total.amount);
+    await late.checkout.reconcile(late.runId);
+    expect(late.refunded()).toBe(late.total.amount);
+  });
+
+  it("re-driving after a lost save keeps the one order and its number", async () => {
+    const w = await world({ flaky: true }).setup();
+    await w.start();
+    await w.confirm(FAKE_TOKENS.ok);
+    await expect(w.deliver()).rejects.toThrow(/store down/);
+    await w.start();
+    const orders = await w.orders();
+    expect(orders).toHaveLength(1);
+    expect(orders[0]?.number).toBe(1);
+  });
+
+  it("compensates cleanly when the cart is gone", async () => {
+    const w = world();
+    expect((await w.start()).status).toBe("compensated");
   });
 
   it("refuses when stock is short", async () => {
