@@ -1,9 +1,11 @@
 import {
   type Database,
+  type DomainEvent,
   decideReserveRetry,
   decideSettle,
   type Entity,
   type InventoryRepository,
+  type Outbox,
   type Repositories,
   type Repository,
 } from "@free-commerce/core";
@@ -12,9 +14,13 @@ import type { Reservation, StockLevel } from "@free-commerce/schema";
 type State = {
   [K in Exclude<
     keyof Repositories,
-    "inventory"
+    "inventory" | "outbox"
   >]: Repositories[K] extends Repository<infer T> ? Map<string, T> : never;
-} & { stock: Map<string, StockLevel>; reservations: Map<string, Reservation> };
+} & {
+  stock: Map<string, StockLevel>;
+  reservations: Map<string, Reservation>;
+  outbox: Map<string, { event: DomainEvent; delivered: boolean }>;
+};
 
 const emptyState = (): State => ({
   products: new Map(),
@@ -22,6 +28,7 @@ const emptyState = (): State => ({
   orders: new Map(),
   stock: new Map(),
   reservations: new Map(),
+  outbox: new Map(),
 });
 
 const repository = <T extends Entity>(
@@ -97,11 +104,30 @@ const inventory = (state: () => State): InventoryRepository => ({
   },
 });
 
+/** Map insertion order is the outbox order. */
+const outbox = (rows: () => State["outbox"]): Outbox => ({
+  async add(event) {
+    if (!rows().has(event.id))
+      rows().set(event.id, { event: structuredClone(event), delivered: false });
+  },
+  async pending(limit) {
+    return [...rows().values()]
+      .filter((r) => !r.delivered)
+      .slice(0, limit)
+      .map((r) => structuredClone(r.event));
+  },
+  async markDelivered(id) {
+    const row = rows().get(id);
+    if (row) row.delivered = true;
+  },
+});
+
 const bind = (state: () => State): Repositories => ({
   inventory: inventory(state),
   products: repository(() => state().products),
   carts: repository(() => state().carts),
   orders: repository(() => state().orders),
+  outbox: outbox(() => state().outbox),
 });
 
 /**
@@ -121,6 +147,7 @@ export function createMemoryDatabase(): Database {
           orders: new Map(state.orders),
           stock: new Map(state.stock),
           reservations: new Map(state.reservations),
+          outbox: new Map([...state.outbox].map(([k, v]) => [k, { ...v }])),
         };
         const result = await fn(bind(() => copy));
         state = copy;

@@ -20,6 +20,15 @@ export {
   type VariantInput,
 } from "./catalog/catalog";
 export {
+  createEventBus,
+  type DomainEvent,
+  type EventBus,
+  type EventHandler,
+  idempotent,
+  type Outbox,
+  relayOutbox,
+} from "./events/events";
+export {
   createInventory,
   decideReserveRetry,
   decideSettle,
@@ -42,6 +51,18 @@ export {
   resolvePrice,
 } from "./pricing/pricing";
 export { ProviderError, type ProviderErrorCode } from "./providers/error";
+export {
+  createFlatRateShipping,
+  createWeightBasedShipping,
+  type FlatRateConfig,
+  flatRateConfigSchema,
+  type ShippingOption,
+  type ShippingProvider,
+  type ShippingQuoteInput,
+  shippingOptions,
+  type WeightBasedConfig,
+  weightBasedConfigSchema,
+} from "./providers/shipping";
 export {
   type StorageConfig,
   type StorageProvider,
