@@ -73,24 +73,3 @@ export const Order = z
     message: "refunded exceeds paid",
   });
 export type Order = z.infer<typeof Order>;
-
-/** Notes, customer messages and status changes share one timeline. */
-export const TimelineEvent = z.discriminatedUnion("kind", [
-  z.object({
-    id: idSchema("tl"),
-    orderId: idSchema("ord"),
-    at: Timestamp,
-    kind: z.enum(["note", "customer_message"]),
-    body: z.string().min(1),
-  }),
-  z.object({
-    id: idSchema("tl"),
-    orderId: idSchema("ord"),
-    at: Timestamp,
-    kind: z.literal("status_change"),
-    machine: z.enum(["lifecycle", "payment", "fulfilment"]),
-    from: z.string(),
-    to: z.string(),
-  }),
-]);
-export type TimelineEvent = z.infer<typeof TimelineEvent>;

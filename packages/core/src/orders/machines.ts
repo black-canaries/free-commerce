@@ -15,6 +15,7 @@ type TransitionReason =
   | "payment_unsettled"
   | "already_fulfilled"
   | "invalid_quantity"
+  | "invalid_amount"
   | "unknown_line"
   | "currency_mismatch"
   | "refund_exceeds_paid";
@@ -42,7 +43,7 @@ export const LIFECYCLE_TRANSITIONS: Record<
   cancelled: [],
 };
 
-/** Refund targets (`partially_refunded`, `refunded`) are reached only through `refundOrder`. */
+/** Non-refund moves only. Refund states (`paid | partially_refunded` to `partially_refunded | refunded`) go through `refundOrder`. */
 export const PAYMENT_TRANSITIONS: Record<
   PaymentStatus,
   readonly PaymentStatus[]
@@ -50,20 +51,10 @@ export const PAYMENT_TRANSITIONS: Record<
   unpaid: ["requires_action", "pending", "paid"],
   requires_action: ["pending", "paid", "failed"],
   pending: ["paid", "failed"],
-  paid: ["partially_refunded", "refunded"],
-  partially_refunded: ["partially_refunded", "refunded"],
+  paid: [],
+  partially_refunded: [],
   refunded: [],
   failed: [],
-};
-
-/** Fulfilment is derived from lines, so it only ever moves forward. */
-export const FULFILMENT_TRANSITIONS: Record<
-  FulfilmentStatus,
-  readonly FulfilmentStatus[]
-> = {
-  unfulfilled: ["partially_fulfilled", "fulfilled"],
-  partially_fulfilled: ["partially_fulfilled", "fulfilled"],
-  fulfilled: [],
 };
 
 const fail = (
@@ -117,28 +108,32 @@ export const transitionLifecycle = (order: Order, to: OrderStatus): Result => {
   if (!LIFECYCLE_TRANSITIONS[from].includes(to)) return refuse("not_allowed");
   if (to === "completed") {
     if (!captured(order.paymentStatus)) return refuse("payment_not_captured");
-    if (order.fulfilmentStatus !== "fulfilled")
+    if (deriveFulfilment(order.lines) !== "fulfilled")
       return refuse("not_fully_fulfilled");
   }
   // Cancelling must not strand money or leave a fulfilled order cancelled.
   if (to === "cancelled") {
     if (!["unpaid", "failed", "refunded"].includes(order.paymentStatus))
       return refuse("payment_unsettled");
-    if (order.fulfilmentStatus === "fulfilled")
+    if (deriveFulfilment(order.lines) === "fulfilled")
       return refuse("already_fulfilled");
   }
-  return { ok: true, order: { ...order, status: to } };
+  return { ok: true, order: settle({ ...order, status: to }) }; // a paid draft may complete on opening
 };
 
-/** Non-refund payment moves. Anything past `unpaid` needs an open order. */
+/** Non-refund payment moves; drafts may be marked paid, finished orders may not. */
 export const transitionPayment = (order: Order, to: PaymentStatus): Result => {
   const from = order.paymentStatus;
   const refuse = (reason: TransitionReason) =>
     fail("payment", from, to, reason);
-  const viaRefund = to === "partially_refunded" || to === "refunded";
-  if (viaRefund || !PAYMENT_TRANSITIONS[from].includes(to))
-    return refuse("not_allowed");
-  if (order.status !== "open") return refuse("order_not_open");
+  if (!PAYMENT_TRANSITIONS[from].includes(to)) return refuse("not_allowed");
+  if (order.status === "completed" || order.status === "cancelled")
+    return refuse("order_not_open");
+  if (
+    to === "paid" &&
+    !(Number.isSafeInteger(order.total.amount) && order.total.amount >= 0)
+  )
+    return refuse("invalid_amount");
   const paid = to === "paid" ? order.total : order.paid;
   return { ok: true, order: settle({ ...order, paymentStatus: to, paid }) };
 };
@@ -154,7 +149,7 @@ export const refundOrder = (order: Order, amount: Order["paid"]): Result => {
   if (amount.currency !== order.paid.currency)
     return refuse("currency_mismatch");
   if (!Number.isSafeInteger(amount.amount) || amount.amount <= 0)
-    return refuse("invalid_quantity");
+    return refuse("invalid_amount");
   if (order.refunded.amount + amount.amount > order.paid.amount)
     return refuse("refund_exceeds_paid");
   return {
@@ -175,7 +170,7 @@ export const fulfil = (
   order: Order,
   items: readonly { lineId: string; quantity: number }[],
 ): Result => {
-  const from = order.fulfilmentStatus;
+  const from = deriveFulfilment(order.lines);
   const refuse = (reason: TransitionReason, to: string = from) =>
     fail("fulfilment", from, to, reason);
   if (order.status !== "open") return refuse("order_not_open");

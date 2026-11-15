@@ -8,10 +8,7 @@ import { newId, Order } from "@free-commerce/schema";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import {
-  FULFILMENT_TRANSITIONS,
   fulfil,
-  LIFECYCLE_TRANSITIONS,
-  PAYMENT_TRANSITIONS,
   type Result,
   refundOrder,
   settle,
@@ -19,6 +16,11 @@ import {
   transitionPayment,
 } from "./machines";
 
+const FULFILMENT: FulfilmentStatus[] = [
+  "unfulfilled",
+  "partially_fulfilled",
+  "fulfilled",
+];
 const LIFECYCLE: OrderStatus[] = ["draft", "open", "completed", "cancelled"];
 const PAYMENT: PaymentStatus[] = [
   "unpaid",
@@ -69,25 +71,55 @@ const ok = (r: Result) => {
 const pairs = <T>(xs: readonly T[]) =>
   xs.flatMap((from) => xs.map((to) => [from, to] as const));
 
-describe("transition tables (matrix)", () => {
-  // Lifecycle edges that are in the table can still be refused by a guard (covered below);
-  // edges outside the table must always be refused as not_allowed.
-  it.each(
-    pairs(LIFECYCLE).filter(([f, t]) => !LIFECYCLE_TRANSITIONS[f].includes(t)),
-  )("lifecycle %s -> %s is illegal", (from, to) => {
-    expect(transitionLifecycle(make({ status: from }), to)).toEqual({
-      ok: false,
-      error: { machine: "lifecycle", from, to, reason: "not_allowed" },
-    });
-  });
+// Literal expected edges: editing a table in machines.ts must fail these tests.
+const LIFECYCLE_EDGES = [
+  ["draft", "open"],
+  ["draft", "cancelled"],
+  ["open", "completed"],
+  ["open", "cancelled"],
+] as const;
+const PAYMENT_EDGES = [
+  ["unpaid", "requires_action"],
+  ["unpaid", "pending"],
+  ["unpaid", "paid"],
+  ["requires_action", "pending"],
+  ["requires_action", "paid"],
+  ["requires_action", "failed"],
+  ["pending", "paid"],
+  ["pending", "failed"],
+] as const;
+const REFUND_EDGES = [
+  ["paid", "partially_refunded"],
+  ["paid", "refunded"],
+  ["partially_refunded", "partially_refunded"],
+  ["partially_refunded", "refunded"],
+] as const;
+const hasEdge = (
+  edges: readonly (readonly [string, string])[],
+  from: string,
+  to: string,
+) => edges.some(([f, t]) => f === from && t === to);
 
-  it.each(
-    pairs(LIFECYCLE).filter(
-      ([f, t]) => LIFECYCLE_TRANSITIONS[f].includes(t) && t !== "completed",
-    ),
-  )("lifecycle %s -> %s is legal on a clean order", (from, to) => {
-    expect(ok(transitionLifecycle(make({ status: from }), to)).status).toBe(to);
-  });
+describe("transition matrices (literal edges)", () => {
+  it.each(pairs(LIFECYCLE).filter(([f, t]) => !hasEdge(LIFECYCLE_EDGES, f, t)))(
+    "lifecycle %s -> %s is illegal",
+    (from, to) => {
+      expect(transitionLifecycle(make({ status: from }), to)).toEqual({
+        ok: false,
+        error: { machine: "lifecycle", from, to, reason: "not_allowed" },
+      });
+    },
+  );
+
+  // `open -> completed` is also guarded (covered below); the rest are legal on a clean order.
+  it.each(LIFECYCLE_EDGES.filter(([, t]) => t !== "completed"))(
+    "lifecycle %s -> %s is legal",
+    (from, to) => {
+      expect(ok(transitionLifecycle(make({ status: from }), to)).status).toBe(
+        to,
+      );
+    },
+  );
 
   const heldMoney = (from: PaymentStatus) => {
     const captured = ["paid", "partially_refunded", "refunded"].includes(from);
@@ -96,43 +128,31 @@ describe("transition tables (matrix)", () => {
       refunded: usd(from === "refunded" ? 1000 : 0),
     };
   };
-  const isRefundTarget = (to: PaymentStatus) =>
-    to === "partially_refunded" || to === "refunded";
 
-  // Refund targets are reached only via refundOrder, never via transitionPayment.
-  it.each(
-    pairs(PAYMENT).filter(
-      ([f, t]) => PAYMENT_TRANSITIONS[f].includes(t) && !isRefundTarget(t),
-    ),
-  )("payment %s -> %s is legal", (from, to) => {
+  it.each(PAYMENT_EDGES)("payment %s -> %s is legal", (from, to) => {
     const o = make({ paymentStatus: from, ...heldMoney(from) });
     expect(ok(transitionPayment(o, to)).paymentStatus).toBe(to);
   });
 
-  it.each(
-    pairs(PAYMENT).filter(
-      ([f, t]) => !PAYMENT_TRANSITIONS[f].includes(t) || isRefundTarget(t),
-    ),
-  )("payment %s -> %s is illegal", (from, to) => {
-    const o = make({ paymentStatus: from, ...heldMoney(from) });
-    expect(transitionPayment(o, to)).toEqual({
-      ok: false,
-      error: { machine: "payment", from, to, reason: "not_allowed" },
-    });
-  });
+  it.each(pairs(PAYMENT).filter(([f, t]) => !hasEdge(PAYMENT_EDGES, f, t)))(
+    "payment %s -> %s is illegal via transitionPayment",
+    (from, to) => {
+      const o = make({ paymentStatus: from, ...heldMoney(from) });
+      expect(transitionPayment(o, to)).toEqual({
+        ok: false,
+        error: { machine: "payment", from, to, reason: "not_allowed" },
+      });
+    },
+  );
 
-  it.each([
-    ["unfulfilled", "unfulfilled", false],
-    ["unfulfilled", "partially_fulfilled", true],
-    ["unfulfilled", "fulfilled", true],
-    ["partially_fulfilled", "unfulfilled", false],
-    ["partially_fulfilled", "partially_fulfilled", true],
-    ["partially_fulfilled", "fulfilled", true],
-    ["fulfilled", "unfulfilled", false],
-    ["fulfilled", "partially_fulfilled", false],
-    ["fulfilled", "fulfilled", false],
-  ] as const)("fulfilment %s -> %s legal=%s", (from, to, legal) => {
-    expect(FULFILMENT_TRANSITIONS[from].includes(to)).toBe(legal);
+  // Refunds: legal only from a captured state, never to a non-refund state.
+  it.each(PAYMENT)("refund from %s", (from) => {
+    const o = make({ paymentStatus: from, ...heldMoney(from) });
+    const r = refundOrder(o, usd(1));
+    const legal = ["paid", "partially_refunded"].includes(from);
+    expect(r.ok).toBe(legal);
+    if (r.ok)
+      expect(hasEdge(REFUND_EDGES, from, r.order.paymentStatus)).toBe(true);
   });
 });
 
@@ -199,7 +219,7 @@ describe("lifecycle guards", () => {
 
 describe("payment guards and automatic fulfilment", () => {
   it("requires an open order", () => {
-    for (const status of ["draft", "completed", "cancelled"] as const)
+    for (const status of ["completed", "cancelled"] as const)
       expect(transitionPayment(make({ status }), "pending")).toMatchObject({
         ok: false,
         error: { reason: "order_not_open", from: "unpaid", to: "pending" },
@@ -238,6 +258,33 @@ describe("payment guards and automatic fulfilment", () => {
   });
 });
 
+describe("order integrity guards", () => {
+  it("drafts can be marked paid, and a paid draft completes on opening", () => {
+    const d = make({ status: "draft", lines: [line("digital")] });
+    const paid = ok(transitionPayment(d, "paid"));
+    expect(paid).toMatchObject({ status: "draft", paymentStatus: "paid" });
+    expect(ok(transitionLifecycle(paid, "open")).status).toBe("completed");
+  });
+
+  it("completion uses the lines, not the stored fulfilment status", () => {
+    const stale = make({
+      paymentStatus: "paid",
+      paid: usd(1000),
+      fulfilmentStatus: "fulfilled",
+    });
+    expect(transitionLifecycle(stale, "completed")).toMatchObject({
+      error: { reason: "not_fully_fulfilled" },
+    });
+  });
+
+  it("refuses to capture a negative or fractional total", () => {
+    for (const amount of [-5, 1.5])
+      expect(
+        transitionPayment({ ...make(), total: usd(amount) }, "paid"),
+      ).toMatchObject({ error: { reason: "invalid_amount", to: "paid" } });
+  });
+});
+
 describe("refunds", () => {
   const paid = () => make({ paymentStatus: "paid", paid: usd(1000) });
 
@@ -259,9 +306,9 @@ describe("refunds", () => {
       return r.ok ? null : r.error.reason;
     };
     expect(err(paid(), usd(1001))).toBe("refund_exceeds_paid");
-    expect(err(paid(), usd(0))).toBe("invalid_quantity");
-    expect(err(paid(), usd(-5))).toBe("invalid_quantity");
-    expect(err(paid(), usd(1.5))).toBe("invalid_quantity");
+    expect(err(paid(), usd(0))).toBe("invalid_amount");
+    expect(err(paid(), usd(-5))).toBe("invalid_amount");
+    expect(err(paid(), usd(1.5))).toBe("invalid_amount");
     expect(err(paid(), { amount: 1, currency: "EUR" })).toBe(
       "currency_mismatch",
     );
@@ -403,21 +450,24 @@ const derive = (o: Order): FulfilmentStatus => {
 const isCaptured = (o: Order) =>
   ["paid", "partially_refunded", "refunded"].includes(o.paymentStatus);
 
-const follows = <T extends string>(
-  table: Record<T, readonly T[]>,
-  from: T,
-  to: T,
-) => from === to || table[from].includes(to);
+const follows = (
+  edges: readonly (readonly [string, string])[],
+  from: string,
+  to: string,
+) => from === to || hasEdge(edges, from, to);
 
-/** Each machine only moves along its own table. */
+/** Each machine only moves along its own literal edges. */
 const assertTables = (o: Order, n: Order) => {
-  expect(follows(LIFECYCLE_TRANSITIONS, o.status, n.status)).toBe(true);
-  expect(follows(PAYMENT_TRANSITIONS, o.paymentStatus, n.paymentStatus)).toBe(
-    true,
-  );
+  expect(follows(LIFECYCLE_EDGES, o.status, n.status)).toBe(true);
   expect(
-    follows(FULFILMENT_TRANSITIONS, o.fulfilmentStatus, n.fulfilmentStatus),
+    follows(
+      [...PAYMENT_EDGES, ...REFUND_EDGES],
+      o.paymentStatus,
+      n.paymentStatus,
+    ),
   ).toBe(true);
+  const rank = (x: Order) => FULFILMENT.indexOf(x.fulfilmentStatus);
+  expect(rank(n)).toBeGreaterThanOrEqual(rank(o));
 };
 
 /** Combined-state rules across the three machines. */
