@@ -1,18 +1,15 @@
 import { ProviderError } from "./error";
-import {
-  assertChargeable,
-  type PaymentEvent,
-  type PaymentProvider,
-} from "./payment";
+import { assertChargeable, type PaymentProvider } from "./payment";
 
 const NAME = "manual-payments";
-const unsupported = (what: string) => () =>
+const unsupported = (what: string) => (): Promise<never> =>
   Promise.reject(new ProviderError(NAME, "rejected", `${what} unsupported`));
 
 /**
  * @experimental Bank transfer, cash and other payments an admin marks paid.
  * Stateless: ids derive from idempotency keys, so replays are free, and `capture`
- * is the admin's "mark paid". Order state, not this provider, enforces refund limits.
+ * is the admin's "mark paid". Having no store, it cannot reject a reused key with different input
+ * or check currency/limits against the payment: the caller (task 2.8 order actions) must.
  * Has no remote state: skip it in reconciliation (`retrieve` is unsupported).
  */
 export function createManualPayments(): PaymentProvider {
@@ -40,8 +37,6 @@ export function createManualPayments(): PaymentProvider {
     confirm: unsupported("confirm"),
     retrieve: unsupported("retrieve"),
     chargeSavedMethod: unsupported("saved methods"),
-    verifyWebhook: unsupported("webhooks") as (
-      ...a: unknown[]
-    ) => Promise<PaymentEvent>,
+    verifyWebhook: unsupported("webhooks"),
   };
 }

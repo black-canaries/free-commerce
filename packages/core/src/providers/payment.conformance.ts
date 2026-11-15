@@ -20,6 +20,10 @@ export function paymentConformance(
       rawBody: string;
       headers: Record<string, string>;
     };
+    /** Valid signature for an arbitrary body. */
+    sign: (rawBody: string) => Record<string, string>;
+    /** Signature made with the wrong secret. */
+    signWrong: (rawBody: string) => Record<string, string>;
   },
 ): void {
   describe(`PaymentProvider conformance: ${name}`, () => {
@@ -170,8 +174,77 @@ export function paymentConformance(
       expect(await code(charge("cus_2"))).toBe("not_found");
     });
 
+    it("rejects bad money guards and currency mismatches", async () => {
+      const { provider, created } = await pay("manual");
+      const eur = { amount: 100, currency: "EUR" };
+      for (const amount of [usd(0), usd(-1), eur]) {
+        expect(
+          await code(
+            provider.capture({
+              idempotencyKey: `c${amount.amount}${amount.currency}`,
+              paymentId: created.id,
+              amount,
+            }),
+          ),
+        ).toBe("rejected");
+      }
+      await provider.capture({
+        idempotencyKey: "ok",
+        paymentId: created.id,
+        amount: usd(1000),
+      });
+      expect(
+        await code(
+          provider.refund({
+            idempotencyKey: "eur",
+            paymentId: created.id,
+            amount: eur,
+          }),
+        ),
+      ).toBe("rejected");
+    });
+
+    it("saveMethod requires a customerRef; saved charges need a positive amount", async () => {
+      const t = make();
+      expect(
+        await code(
+          t.provider.createPayment({
+            idempotencyKey: "nc",
+            amount: usd(5),
+            reference: "r",
+            saveMethod: true,
+          }),
+        ),
+      ).toBe("rejected");
+      const p = await t.provider.createPayment({
+        idempotencyKey: "sm",
+        amount: usd(5),
+        reference: "r",
+        saveMethod: true,
+        customerRef: "cus_1",
+      });
+      const { savedMethodId } = await t.provider.confirm({
+        idempotencyKey: "sm2",
+        paymentId: p.id,
+        methodToken: t.okToken,
+      });
+      for (const amount of [0, -1]) {
+        expect(
+          await code(
+            t.provider.chargeSavedMethod({
+              idempotencyKey: `z${amount}`,
+              savedMethodId: savedMethodId as string,
+              customerRef: "cus_1",
+              amount: usd(amount),
+              reference: "r",
+            }),
+          ),
+        ).toBe("rejected");
+      }
+    });
+
     it("verifies webhook signatures over the raw body", async () => {
-      const { provider, created, webhook } = await pay();
+      const { provider, created, webhook, sign, signWrong } = await pay();
       const d = webhook(created.id);
       const event = await provider.verifyWebhook(d.rawBody, d.headers);
       expect(event.payment.id).toBe(created.id);
@@ -180,6 +253,13 @@ export function paymentConformance(
         await code(provider.verifyWebhook(`${d.rawBody} `, d.headers)),
       ).toBe("rejected");
       expect(await code(provider.verifyWebhook(d.rawBody, {}))).toBe(
+        "rejected",
+      );
+      expect(
+        await code(provider.verifyWebhook(d.rawBody, signWrong(d.rawBody))),
+      ).toBe("rejected");
+      // validly signed but not a PaymentEvent: must be rejected, never cast
+      expect(await code(provider.verifyWebhook("{}", sign("{}")))).toBe(
         "rejected",
       );
     });

@@ -4,6 +4,7 @@ import {
   type Payment,
   type PaymentEvent,
   type PaymentProvider,
+  paymentEventSchema,
   type Refund,
 } from "./payment";
 
@@ -41,6 +42,8 @@ interface Record_ {
 export function createFakePayments(secret = "whsec_fake") {
   const payments = new Map<string, Record_>();
   const methods = new Map<string, { customerRef: string; token: string }>();
+  let refundState: Refund["state"] = "succeeded";
+  /** Input is compared as JSON, so key order matters; fine for a fake. */
   const replay = new Map<string, { input: string; result: unknown }>();
   let seq = 0;
   const next = (p: string) => `${p}_fake_${++seq}`;
@@ -112,6 +115,8 @@ export function createFakePayments(secret = "whsec_fake") {
         const r = get(i.paymentId);
         if (r.payment.state !== "requires_action")
           throw reject("payment cannot be confirmed");
+        if (i.methodToken === FAKE_TOKENS.unavailable)
+          throw new ProviderError(NAME, "unavailable", "down");
         r.token = i.methodToken;
         switch (i.methodToken) {
           case FAKE_TOKENS.ok:
@@ -125,8 +130,6 @@ export function createFakePayments(secret = "whsec_fake") {
             });
           case FAKE_TOKENS.async:
             return set(r, { state: "pending" });
-          case FAKE_TOKENS.unavailable:
-            throw new ProviderError(NAME, "unavailable", "down");
           default:
             throw reject("unknown method token");
         }
@@ -158,8 +161,8 @@ export function createFakePayments(secret = "whsec_fake") {
           r.refunded + i.amount.amount > amount
         )
           throw reject("refund exceeds captured amount");
-        r.refunded += i.amount.amount;
-        return { id: next("re"), amount: i.amount, state: "succeeded" };
+        if (refundState !== "failed") r.refunded += i.amount.amount;
+        return { id: next("re"), amount: i.amount, state: refundState };
       }),
     chargeSavedMethod: (i) =>
       once("saved", i, () => {
@@ -186,10 +189,10 @@ export function createFakePayments(secret = "whsec_fake") {
           : succeed(r);
       }),
     async verifyWebhook(rawBody, headers) {
-      if (headers["x-fake-signature"] !== sign(rawBody))
+      if (headers["x-fake-signature"] !== signature(rawBody))
         throw reject("bad webhook signature");
       try {
-        return JSON.parse(rawBody) as PaymentEvent;
+        return paymentEventSchema.parse(JSON.parse(rawBody));
       } catch (cause) {
         throw new ProviderError(NAME, "rejected", "malformed webhook", {
           cause,
@@ -198,8 +201,9 @@ export function createFakePayments(secret = "whsec_fake") {
     },
   };
 
-  /** Not cryptographic: the fake only has to fail on a wrong secret or a changed body. */
-  const sign = (body: string) => `${secret}:${body.length}:${body}`;
+  /** Not cryptographic; never copy: it puts the secret in the header: the fake only has to fail on a wrong secret or a changed body. */
+  const signature = (body: string) => `${secret}:${body.length}:${body}`;
+  const sign = (body: string) => ({ "x-fake-signature": signature(body) });
 
   return Object.assign(provider, {
     /** Completes a `requires_action` (3DS) or `pending` (async) payment, as the customer or bank would. */
@@ -214,6 +218,16 @@ export function createFakePayments(secret = "whsec_fake") {
         ? succeed(r)
         : fail(r, "authentication_failed");
     },
+    /** The next refunds settle as `pending` or `failed` (a failed refund frees the amount). */
+    refundsAs(state: Refund["state"]): void {
+      refundState = state;
+    },
+    /** Signs an arbitrary body as this provider would. */
+    sign,
+    /** A signature made with a different secret. */
+    signWrong: (body: string) => ({
+      "x-fake-signature": `other:${body.length}:${body}`,
+    }),
     /** A signed webhook delivery for the payment's current state. */
     delivery(paymentId: string): {
       rawBody: string;
@@ -224,7 +238,7 @@ export function createFakePayments(secret = "whsec_fake") {
         payment: structuredClone(get(paymentId).payment),
       };
       const rawBody = JSON.stringify(event);
-      return { rawBody, headers: { "x-fake-signature": sign(rawBody) } };
+      return { rawBody, headers: sign(rawBody) };
     },
   });
 }

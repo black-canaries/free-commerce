@@ -17,6 +17,8 @@ paymentConformance("fake", () => {
     provider: fake,
     okToken: FAKE_TOKENS.ok,
     webhook: (id) => fake.delivery(id),
+    sign: fake.sign,
+    signWrong: fake.signWrong,
   };
 });
 
@@ -151,6 +153,29 @@ describe("fake payments: every state and failure mode", () => {
     await expect(b.verifyWebhook(d.rawBody, d.headers)).rejects.toMatchObject({
       code: "rejected",
     });
+  });
+});
+
+describe("refund outcomes", () => {
+  it("pending and failed refunds; a failed refund frees the amount", async () => {
+    const { fake, id } = await start(FAKE_TOKENS.ok);
+    const refund = (k: string, amount: number) =>
+      fake.refund({ idempotencyKey: k, paymentId: id, amount: usd(amount) });
+    fake.refundsAs("pending");
+    expect((await refund("a", 1000)).state).toBe("pending");
+    fake.refundsAs("failed");
+    await expect(refund("b", 1)).rejects.toMatchObject({ code: "rejected" });
+    fake.refundsAs("succeeded");
+    const fresh = await start(FAKE_TOKENS.ok);
+    fresh.fake.refundsAs("failed");
+    const f = (k: string) =>
+      fresh.fake.refund({
+        idempotencyKey: k,
+        paymentId: fresh.id,
+        amount: usd(1000),
+      });
+    expect((await f("x")).state).toBe("failed");
+    expect((await f("y")).state).toBe("failed");
   });
 });
 

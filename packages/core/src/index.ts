@@ -59,6 +59,7 @@ export {
   type PaymentEvent,
   type PaymentProvider,
   type PaymentState,
+  paymentEventSchema,
   type Refund,
 } from "./providers/payment";
 export { createManualPayments } from "./providers/payment.manual";

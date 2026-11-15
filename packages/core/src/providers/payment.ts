@@ -1,4 +1,5 @@
-import type { Money } from "@free-commerce/schema";
+import { Money } from "@free-commerce/schema";
+import { z } from "zod";
 import { ProviderError } from "./error";
 
 /** @experimental Lifecycle of one payment attempt at the provider. */
@@ -25,7 +26,7 @@ export const PAYMENT_STATE_TRANSITIONS: Record<
   failed: [],
 };
 
-/** What the customer's device must do next. Never contains card data. */
+/** What the customer's device must do next. Never contains card data. `clientSecret` is sensitive: hand it only to the paying customer; never log or persist it. */
 export type PaymentAction =
   | { type: "client"; clientSecret: string } // hand to the provider's client SDK
   | { type: "redirect"; url: string };
@@ -50,13 +51,41 @@ export interface Refund {
   state: "pending" | "succeeded" | "failed";
 }
 
+const money = Money as z.ZodType<Money>;
+
+/** @experimental Wire shape every adapter's `verifyWebhook` must produce (validate, never cast). */
+export const paymentEventSchema = z.object({
+  /** Provider's unique event id. Deliveries repeat: the saga must dedupe on it. */
+  id: z.string().min(1),
+  payment: z.object({
+    id: z.string().min(1),
+    state: z.enum([
+      "requires_action",
+      "pending",
+      "authorized",
+      "captured",
+      "failed",
+    ]),
+    amount: money,
+    action: z
+      .union([
+        z.object({ type: z.literal("client"), clientSecret: z.string() }),
+        z.object({ type: z.literal("redirect"), url: z.string() }),
+      ])
+      .optional(),
+    savedMethodId: z.string().optional(),
+    failureCode: z.string().optional(),
+  }),
+  refund: z
+    .object({
+      id: z.string().min(1),
+      amount: money,
+      state: z.enum(["pending", "succeeded", "failed"]),
+    })
+    .optional(),
+});
 /** @experimental Verified inbound webhook: a snapshot of the payment (and refund) it concerns. */
-export interface PaymentEvent {
-  /** Provider's unique event id; consumers dedupe on it (deliveries repeat). */
-  id: string;
-  payment: Payment;
-  refund?: Refund;
-}
+export type PaymentEvent = z.infer<typeof paymentEventSchema>;
 
 /** Every mutating call carries a caller-chosen key; replaying it returns the first result. */
 interface Idempotent {
@@ -71,6 +100,7 @@ interface Idempotent {
  * returns the original result; the same key with different input is `rejected`.
  * Errors are `ProviderError` (a declined payment is a `failed` Payment, not an error).
  * Nothing here assumes one-time charges; see ADR 0022 for recurring billing.
+ * Adapters should reject PAN-shaped `methodToken`s; conformance cannot force it on real services.
  */
 export interface PaymentProvider {
   /** `captureMode: "manual"` holds funds (`authorized`) until `capture`. */
