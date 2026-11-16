@@ -196,6 +196,7 @@ const privateV4 = ([a = 0, b = 0, c = 0]: number[]): boolean =>
   (a === 172 && b >= 16 && b <= 31) ||
   (a === 192 && b === 0 && c === 0) ||
   (a === 192 && b === 0 && c === 2) ||
+  (a === 192 && b === 88 && c === 99) ||
   (a === 192 && b === 168) ||
   (a === 198 && (b === 18 || b === 19)) ||
   (a === 198 && b === 51 && c === 100) ||
@@ -234,13 +235,14 @@ const privateV6 = (g: number[]): boolean => {
     (g0 & 0xfe00) === 0xfc00 || // unique local
     (g0 & 0xffc0) === 0xfe80 || // link local
     (g0 & 0xff00) === 0xff00 || // multicast
-    (g0 === 0x2001 && g1 === 0xdb8) // documentation
+    (g0 === 0x2001 && (g1 === 0xdb8 || g1 === 0)) || // documentation, Teredo
+    (g0 === 0x100 && g1 === 0 && g2 === 0 && g[3] === 0) // discard-only
   );
 };
 
 /** True when `host` (a URL hostname or a resolved address) is an address that must not be reached. */
 export const isPrivateAddress = (host: string): boolean => {
-  const bare = host.replace(/^\[|\]$/g, "");
+  const bare = host.replace(/^\[|\]$/g, "").replace(/\.+$/, "");
   const a = v4(bare);
   if (a) return a.some((n) => n > 255) || privateV4(a);
   const g = bare.includes(":") ? groups6(bare) : null;
@@ -261,7 +263,9 @@ export const webhookUrlProblem = (raw: string, dev = false): string | null => {
     return "URL must use https";
   if (url.username || url.password) return "URL must not contain credentials";
   if (dev) return null;
-  const host = url.hostname;
+  if (!["", "443", "8443"].includes(url.port)) return "port not allowed";
+  // `localhost.` is the same host as `localhost`; WHATWG URL keeps the trailing dot.
+  const host = url.hostname.replace(/\.+$/, "");
   if (LOCAL_NAME.test(host) || (!host.includes(".") && !host.includes(":")))
     return "host is not public";
   if (isPrivateAddress(host)) return "host is a private or reserved address";
@@ -433,7 +437,7 @@ const blockReason = async (
 ): Promise<string | null> => {
   const problem = webhookUrlProblem(url, d.dev);
   if (problem) return `blocked: ${problem}`;
-  const host = new URL(url).hostname;
+  const host = new URL(url).hostname.replace(/\.+$/, "");
   if (!d.resolve || d.dev || host.includes(":") || v4(host)) return null;
   try {
     return (await d.resolve(host)).some(isPrivateAddress)
@@ -479,7 +483,7 @@ const send = async (
       },
       body,
     });
-    await res.body?.cancel();
+    await res.body?.cancel().catch(() => {}); // the receiver answered; a failed cancel must not cause a resend
     return res.status >= 200 && res.status < 300
       ? { ok: true, status: res.status }
       : { ok: false, status: res.status, error: `HTTP ${res.status}` };
@@ -495,61 +499,102 @@ const send = async (
   }
 };
 
+const CONCURRENCY = 10;
+/** While a send is in flight its delivery is pushed out this far, so another worker leaves it alone. */
+const CLAIM_SECONDS = 300;
+/** A delivery whose endpoint is disabled stays pending and is looked at again this often. */
+const HOLD_SECONDS = 3600;
+
+/** Saves `next` unless the delivery changed since it was claimed (an admin replay wins over a stale result). */
+const settle = async (
+  d: WebhookWorkerDeps,
+  claimed: WebhookDelivery,
+  next: WebhookDelivery,
+): Promise<boolean> => {
+  const fresh = await d.db.webhookDeliveries.get(claimed.id);
+  if (
+    fresh?.status !== "pending" ||
+    fresh.nextAttemptAt !== claimed.nextAttemptAt
+  )
+    return false;
+  await d.db.webhookDeliveries.save(next);
+  return true;
+};
+
+const attemptDelivery = async (
+  d: WebhookWorkerDeps,
+  delivery: WebhookDelivery,
+): Promise<void> => {
+  const at = (seconds: number) =>
+    new Date(d.now() + seconds * 1000).toISOString();
+  const endpoint = await d.db.webhookEndpoints.get(delivery.endpointId);
+  if (!endpoint)
+    return d.db.webhookDeliveries.save({
+      ...delivery,
+      status: "failed",
+      nextAttemptAt: null,
+      lastError: "endpoint missing",
+    });
+  if (!endpoint.enabled)
+    return d.db.webhookDeliveries.save({
+      ...delivery,
+      nextAttemptAt: at(HOLD_SECONDS),
+    });
+  const claimed = { ...delivery, nextAttemptAt: at(CLAIM_SECONDS) };
+  await d.db.webhookDeliveries.save(claimed);
+  const out = await send(d, endpoint, delivery);
+  const attempts = delivery.attempts + 1;
+  if (out.ok) {
+    await settle(d, claimed, {
+      ...delivery,
+      status: "succeeded",
+      attempts,
+      nextAttemptAt: null,
+      lastStatus: out.status,
+      lastError: null,
+    });
+    return;
+  }
+  const wait = WEBHOOK_BACKOFF_SECONDS[attempts - 1];
+  const exhausted = wait === undefined;
+  const settled = await settle(d, claimed, {
+    ...delivery,
+    status: exhausted ? "failed" : "pending",
+    attempts,
+    nextAttemptAt: exhausted ? null : at(wait),
+    lastStatus: out.status,
+    lastError: out.error,
+  });
+  const fresh =
+    exhausted && settled && (await d.db.webhookEndpoints.get(endpoint.id));
+  if (fresh)
+    await d.db.webhookEndpoints.save({
+      ...fresh,
+      enabled: false,
+      disabledReason: `Delivery ${delivery.id} failed ${attempts} times (last: ${out.error})`,
+    });
+};
+
 /**
  * @experimental Attempts every due delivery once (the scheduler calls this on a tick). A failure schedules a
  * retry with backoff; the last failure marks the delivery `failed` and disables the endpoint with a visible
- * reason. Two concurrent workers may both attempt a delivery: receivers dedupe on `webhook-id`.
+ * reason (its other pending deliveries wait, untouched, until it is re-enabled; events that occur while it is
+ * disabled are not queued). A delivery is claimed before sending, up to 10 run at once, and a replay or edit made
+ * while one is in flight is not overwritten. Workers racing past the claim may still double-send: receivers
+ * dedupe on `webhook-id`.
  * Returns the number of deliveries attempted.
  */
 export const deliverDueWebhooks = async (
   d: WebhookWorkerDeps,
   limit = 50,
 ): Promise<number> => {
-  const nowIso = new Date(d.now()).toISOString();
-  const due = await d.db.webhookDeliveries.due(nowIso, limit);
-  for (const delivery of due) {
-    const endpoint = await d.db.webhookEndpoints.get(delivery.endpointId);
-    if (!endpoint?.enabled) {
-      await d.db.webhookDeliveries.save({
-        ...delivery,
-        status: "failed",
-        nextAttemptAt: null,
-        lastError: "endpoint disabled",
-      });
-      continue;
-    }
-    const out = await send(d, endpoint, delivery);
-    const attempts = delivery.attempts + 1;
-    if (out.ok) {
-      await d.db.webhookDeliveries.save({
-        ...delivery,
-        status: "succeeded",
-        attempts,
-        nextAttemptAt: null,
-        lastStatus: out.status,
-        lastError: null,
-      });
-      continue;
-    }
-    const exhausted = attempts >= WEBHOOK_MAX_ATTEMPTS;
-    const wait = WEBHOOK_BACKOFF_SECONDS[attempts - 1];
-    await d.db.webhookDeliveries.save({
-      ...delivery,
-      status: exhausted ? "failed" : "pending",
-      attempts,
-      nextAttemptAt:
-        exhausted || wait === undefined
-          ? null
-          : new Date(d.now() + wait * 1000).toISOString(),
-      lastStatus: out.status,
-      lastError: out.error,
-    });
-    if (exhausted)
-      await d.db.webhookEndpoints.save({
-        ...endpoint,
-        enabled: false,
-        disabledReason: `Delivery ${delivery.id} failed ${attempts} times (last: ${out.error})`,
-      });
-  }
+  const due = await d.db.webhookDeliveries.due(
+    new Date(d.now()).toISOString(),
+    limit,
+  );
+  for (let i = 0; i < due.length; i += CONCURRENCY)
+    await Promise.all(
+      due.slice(i, i + CONCURRENCY).map((x) => attemptDelivery(d, x)),
+    );
   return due.length;
 };

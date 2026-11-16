@@ -274,16 +274,80 @@ describe("delivery", () => {
     );
   });
 
-  it("marks deliveries failed when their endpoint was disabled meanwhile", async () => {
+  it("holds deliveries of a disabled endpoint and resumes them once it is re-enabled", async () => {
     const w = await world(() => status(200));
     await fanOutWebhooks(w.db, evt("evt_1"), w.now());
     await updateWebhookEndpoint(w.db, w.endpoint.id, { enabled: false });
     await w.tick();
     expect(w.calls).toHaveLength(0);
     expect((await deliveries(w))[0]).toMatchObject({
-      status: "failed",
-      lastError: "endpoint disabled",
+      status: "pending",
+      attempts: 0,
     });
+    await updateWebhookEndpoint(w.db, w.endpoint.id, { enabled: true });
+    w.advance(3600);
+    await w.tick();
+    expect((await deliveries(w))[0]?.status).toBe("succeeded");
+  });
+
+  it("re-checks the URL before every send, whatever is stored", async () => {
+    const w = await world(() => status(200));
+    await w.db.webhookEndpoints.save({
+      ...w.endpoint,
+      url: "https://10.0.0.1/x",
+    });
+    await fanOutWebhooks(w.db, evt("evt_1"), w.now());
+    await w.tick();
+    expect(w.calls).toHaveLength(0);
+    expect((await deliveries(w))[0]?.lastError).toBe(
+      "blocked: host is a private or reserved address",
+    );
+  });
+
+  it("does not turn a 2xx into a retry when closing the response body fails", async () => {
+    const w = await world(
+      () =>
+        ({
+          status: 200,
+          body: {
+            cancel: async () => {
+              throw new Error("stream");
+            },
+          },
+        }) as unknown as Response,
+    );
+    await fanOutWebhooks(w.db, evt("evt_1"), w.now());
+    await w.tick();
+    expect((await deliveries(w))[0]).toMatchObject({
+      status: "succeeded",
+      attempts: 1,
+    });
+  });
+
+  it("keeps an admin replay made while an attempt is in flight", async () => {
+    let id = "";
+    const w = await world(async () => {
+      await replayWebhookDelivery(w.db, id, w.now());
+      return status(500);
+    });
+    await fanOutWebhooks(w.db, evt("evt_1"), w.now());
+    id = (await deliveries(w))[0]?.id ?? "";
+    await w.tick();
+    expect((await deliveries(w))[0]).toMatchObject({
+      status: "pending",
+      attempts: 0,
+      lastError: null,
+    });
+  });
+
+  it("claims a delivery before sending so another worker leaves it alone", async () => {
+    const w = await world(async () => {
+      expect(await w.tick()).toBe(0);
+      return status(200);
+    });
+    await fanOutWebhooks(w.db, evt("evt_1"), w.now());
+    await w.tick();
+    expect(w.calls).toHaveLength(1);
   });
 });
 
