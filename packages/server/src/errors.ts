@@ -3,6 +3,7 @@ import {
   CartError,
   CatalogError,
   ProviderError,
+  WebhookError,
 } from "@free-commerce/core";
 import type { ApiError, ErrorCode } from "@free-commerce/schema";
 import { z } from "zod";
@@ -65,6 +66,11 @@ export const fromDomain = (err: unknown): HttpError | undefined => {
       err.message,
     );
   if (err instanceof ApiKeyError)
+    return new HttpError(
+      err.code === "not_found" ? "not_found" : "validation_failed",
+      err.message,
+    );
+  if (err instanceof WebhookError)
     return new HttpError(
       err.code === "not_found" ? "not_found" : "validation_failed",
       err.message,

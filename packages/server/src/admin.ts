@@ -5,19 +5,25 @@ import {
   createApiKey,
   createInventory,
   createProduct,
+  createWebhookEndpoint,
   fulfil,
+  getWebhookEndpoint,
   isSafeKey,
   newAuditEntry,
   newStorageKey,
   type OrderResult,
   type ProductInput,
   publishProduct,
+  replayWebhookDelivery,
   revokeApiKey,
   rotateApiKey,
   toSearchDoc,
   transitionLifecycle,
   updateProduct,
+  updateWebhookEndpoint,
   validateUpload,
+  type WebhookDelivery,
+  type WebhookEndpoint,
 } from "@free-commerce/core";
 import {
   Order,
@@ -54,6 +60,22 @@ const NewKey = z.strictObject({
 
 /** Never includes the hash. */
 const keyView = ({ hash: _hash, ...key }: ApiKey) => key;
+
+const WebhookEvents = z.array(z.string().trim().min(1).max(100)).min(1).max(50);
+const NewWebhook = z.strictObject({
+  url: z.string().max(2000),
+  events: WebhookEvents,
+});
+
+/** Never includes the encrypted secret. */
+const webhookView = ({ secretCipher: _cipher, ...e }: WebhookEndpoint) => e;
+
+/** The delivery log shows what was sent where, not the payload (it may hold personal data). */
+const deliveryView = ({ event, ...d }: WebhookDelivery) => ({
+  ...d,
+  eventId: event.id,
+  eventType: event.type,
+});
 
 const IMAGES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 const ASSETS = [...IMAGES, "application/pdf", "application/zip"];
@@ -296,5 +318,74 @@ export const mountAdminRoutes = (app: Hono<AppEnv>, d: AppDeps): void => {
     await revokeApiKey(d.apiKeys, c.req.param("id"), now());
     change(c, `api-keys/${c.req.param("id")}`);
     return c.json({ ok: true });
+  });
+
+  // Webhooks: the signing secret appears only in the create response, which idempotency never stores.
+  // The audit entry records the URL host and event filter, never the secret.
+  const dev = d.allowInsecureWebhooks === true;
+  admin.get("/webhooks", async (c) => {
+    const page = await d.db.webhookEndpoints.list(
+      parse(PageQuery, c.req.query()),
+    );
+    return c.json({ ...page, items: page.items.map(webhookView) });
+  });
+  admin.get("/webhooks/:id", async (c) =>
+    c.json(webhookView(await getWebhookEndpoint(d.db, c.req.param("id")))),
+  );
+  admin.post("/webhooks", async (c) => {
+    const { endpoint, secret } = await createWebhookEndpoint(
+      d.db,
+      parse(NewWebhook, await json(c)),
+      { key: d.webhookKey, dev, now: now() },
+    );
+    change(c, `webhooks/${endpoint.id}`, {
+      host: new URL(endpoint.url).host,
+      events: endpoint.events,
+    });
+    c.set("sensitive", true);
+    return c.json({ ...webhookView(endpoint), secret }, 201);
+  });
+  admin.patch("/webhooks/:id", async (c) => {
+    const id = c.req.param("id");
+    const endpoint = await updateWebhookEndpoint(
+      d.db,
+      id,
+      parse(
+        z
+          .strictObject({
+            url: z.string().max(2000),
+            events: WebhookEvents,
+            enabled: z.boolean(),
+          })
+          .partial(),
+        await json(c),
+      ),
+      dev,
+    );
+    change(c, `webhooks/${id}`, {
+      host: new URL(endpoint.url).host,
+      events: endpoint.events,
+      enabled: endpoint.enabled,
+    });
+    return c.json(webhookView(endpoint));
+  });
+  admin.get("/webhooks/:id/deliveries", async (c) => {
+    const id = c.req.param("id");
+    await getWebhookEndpoint(d.db, id);
+    const page = await d.db.webhookDeliveries.listFor(
+      id,
+      parse(PageQuery, c.req.query()),
+    );
+    return c.json({ ...page, items: page.items.map(deliveryView) });
+  });
+  admin.post("/webhooks/:id/deliveries/:deliveryId/replay", async (c) => {
+    const delivery = await d.db.webhookDeliveries.get(
+      c.req.param("deliveryId"),
+    );
+    if (!delivery || delivery.endpointId !== c.req.param("id"))
+      throw new HttpError("not_found", "Delivery not found");
+    const next = await replayWebhookDelivery(d.db, delivery.id, now());
+    change(c, `webhooks/${delivery.endpointId}/deliveries/${delivery.id}`);
+    return c.json(deliveryView(next));
   });
 };

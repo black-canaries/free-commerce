@@ -21,7 +21,7 @@ if (!url) {
   afterAll(() => client.end());
   const make = async () => {
     await migrate(client);
-    await client`truncate products, carts, orders, stock, reservations, outbox, discounts, redemptions, roles, audit, api_keys`;
+    await client`truncate products, carts, orders, stock, reservations, outbox, discounts, redemptions, roles, audit, api_keys, webhook_endpoints, webhook_deliveries`;
     return createPostgresDatabase(client);
   };
   repositoryConformance("postgres", make);

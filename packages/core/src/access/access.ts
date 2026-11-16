@@ -28,6 +28,7 @@ export const ADMIN_GROUPS = {
   shipping: "settings",
   tax: "settings",
   settings: "settings",
+  webhooks: "settings",
   "api-keys": "keys",
   team: "team",
   audit: "audit",

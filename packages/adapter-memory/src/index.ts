@@ -12,6 +12,9 @@ import {
   type Repositories,
   type Repository,
   usageRefusal,
+  type WebhookDelivery,
+  type WebhookDeliveryRepository,
+  type WebhookEndpoint,
 } from "@free-commerce/core";
 import type {
   DiscountCode,
@@ -22,7 +25,12 @@ import type {
 type State = {
   [K in Exclude<
     keyof Repositories,
-    "inventory" | "outbox" | "discounts" | "audit"
+    | "inventory"
+    | "outbox"
+    | "discounts"
+    | "audit"
+    | "webhookEndpoints"
+    | "webhookDeliveries"
   >]: Repositories[K] extends Repository<infer T> ? Map<string, T> : never;
 } & {
   stock: Map<string, StockLevel>;
@@ -31,6 +39,8 @@ type State = {
   redemptions: Map<string, { codeId: string; customerKey?: string }>;
   outbox: Map<string, { event: DomainEvent; delivered: boolean }>;
   audit: Map<string, AuditEntry>;
+  webhookEndpoints: Map<string, WebhookEndpoint>;
+  webhookDeliveries: Map<string, WebhookDelivery>;
 };
 
 const emptyState = (): State => ({
@@ -44,6 +54,8 @@ const emptyState = (): State => ({
   redemptions: new Map(),
   outbox: new Map(),
   audit: new Map(),
+  webhookEndpoints: new Map(),
+  webhookDeliveries: new Map(),
 });
 
 const repository = <T extends Entity>(
@@ -185,6 +197,51 @@ const audit = (rows: () => State["audit"]): AuditRepository => ({
   },
 });
 
+const webhookDeliveries = (
+  rows: () => State["webhookDeliveries"],
+): WebhookDeliveryRepository => {
+  const base = repository(rows);
+  const all = () => [...rows().values()];
+  return {
+    ...base,
+    async create(delivery) {
+      if (!rows().has(delivery.id))
+        rows().set(delivery.id, structuredClone(delivery));
+    },
+    async due(now, limit) {
+      return all()
+        .filter(
+          (d) =>
+            d.status === "pending" &&
+            d.nextAttemptAt !== null &&
+            d.nextAttemptAt <= now,
+        )
+        .sort(
+          (a, b) =>
+            (a.nextAttemptAt ?? "").localeCompare(b.nextAttemptAt ?? "") ||
+            (a.id < b.id ? -1 : 1),
+        )
+        .slice(0, limit)
+        .map((d) => structuredClone(d));
+    },
+    async listFor(endpointId, { limit, cursor }) {
+      const ids = all()
+        .filter((d) => d.endpointId === endpointId)
+        .map((d) => d.id)
+        .sort()
+        .reverse()
+        .filter((id) => cursor === undefined || id < cursor);
+      const page = ids.slice(0, limit);
+      return {
+        items: page.map((id) =>
+          structuredClone(rows().get(id) as WebhookDelivery),
+        ),
+        nextCursor: ids.length > limit ? (page.at(-1) ?? null) : null,
+      };
+    },
+  };
+};
+
 /** Map insertion order is the outbox order. */
 const outbox = (rows: () => State["outbox"]): Outbox => ({
   async add(event) {
@@ -211,6 +268,8 @@ const bind = (state: () => State): Repositories => ({
   orders: repository(() => state().orders),
   roles: repository(() => state().roles),
   audit: audit(() => state().audit),
+  webhookEndpoints: repository(() => state().webhookEndpoints),
+  webhookDeliveries: webhookDeliveries(() => state().webhookDeliveries),
   outbox: outbox(() => state().outbox),
 });
 
@@ -231,6 +290,8 @@ export function createMemoryDatabase(): Database {
           orders: new Map(state.orders),
           roles: new Map(state.roles),
           audit: new Map(state.audit),
+          webhookEndpoints: new Map(state.webhookEndpoints),
+          webhookDeliveries: new Map(state.webhookDeliveries),
           stock: new Map(state.stock),
           reservations: new Map(state.reservations),
           discounts: new Map(state.discounts),
