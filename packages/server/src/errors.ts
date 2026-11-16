@@ -66,7 +66,7 @@ export const fromDomain = (err: unknown): HttpError | undefined => {
     );
   if (err instanceof ApiKeyError)
     return new HttpError(
-      err.message.startsWith("unknown") ? "not_found" : "validation_failed",
+      err.code === "not_found" ? "not_found" : "validation_failed",
       err.message,
     );
   if (err instanceof ProviderError && err.code === "rejected")

@@ -278,6 +278,37 @@ describe("uploads and file serving", () => {
 });
 
 describe("api keys", () => {
+  it("leaves no usable key when the audit append fails (create and rotate)", async () => {
+    const t = await setup();
+    const { h } = await as(t, "owner");
+    const body = { type: "secret", name: "erp", scopes: ["admin:read"] };
+    const ok = await send(t, "POST", "/admin/api-keys", h, body);
+    const append = t.db.audit.append;
+    t.db.audit.append = async () => {
+      throw new Error("audit down");
+    };
+    const failed = await send(t, "POST", "/admin/api-keys", h, body);
+    expect(failed.res.status).toBe(500);
+    const rotate = await send(
+      t,
+      "POST",
+      `/admin/api-keys/${ok.body.id}/rotate`,
+      h,
+      {},
+    );
+    expect(rotate.res.status).toBe(500);
+    t.db.audit.append = append;
+    const use = (s: string) =>
+      t.app.request("http://x/admin/orders", { headers: { "x-api-key": s } });
+    expect((await use(ok.body.secret)).status).toBe(200);
+    const keys = await t.apiKeys.list({ limit: 10 });
+    expect(
+      keys.items.filter(
+        (k) => k.scopes.length === 1 && !k.revokedAt && !k.expiresAt,
+      ),
+    ).toHaveLength(1);
+  });
+
   it("creates, lists, rotates and revokes; the secret is shown once and never stored by idempotency", async () => {
     const t = await setup();
     const { h } = await as(t, "owner");

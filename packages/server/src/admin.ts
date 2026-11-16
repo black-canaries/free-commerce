@@ -7,6 +7,7 @@ import {
   createProduct,
   fulfil,
   isSafeKey,
+  newAuditEntry,
   newStorageKey,
   type OrderResult,
   type ProductInput,
@@ -28,6 +29,7 @@ import {
 } from "@free-commerce/schema";
 import type { Context, Hono } from "hono";
 import { z } from "zod";
+import { actorOf } from "./access.js";
 import type { AppDeps } from "./app.js";
 import { HttpError, parse } from "./errors.js";
 import type { AppEnv } from "./types.js";
@@ -218,7 +220,34 @@ export const mountAdminRoutes = (app: Hono<AppEnv>, d: AppDeps): void => {
   admin.post("/digital-assets", upload("assets", ASSETS, limits.asset));
   admin.delete("/digital-assets", remove("assets"));
 
-  // Keys: the secret appears only in the create/rotate response, which idempotency never stores.
+  // Keys: the secret appears only in the create/rotate response, which idempotency never stores. The key
+  // store is separate from `db`, so the audit entry is appended here and `undo` compensates if it fails:
+  // a key is never left active with its secret undelivered.
+  const auditKey = async (
+    c: Context<AppEnv>,
+    target: string,
+    after: unknown,
+    undo: () => Promise<void>,
+  ) => {
+    try {
+      await d.db.audit.append(
+        newAuditEntry(
+          {
+            actor: actorOf(c),
+            action: `${c.req.method} ${c.req.routePath}`,
+            target,
+            after,
+          },
+          now(),
+        ),
+      );
+    } catch (err) {
+      await undo();
+      throw err;
+    }
+    c.set("audited", true);
+    c.set("sensitive", true);
+  };
   admin.get("/api-keys", async (c) => {
     const page = await d.apiKeys.list(parse(PageQuery, c.req.query()));
     return c.json({ ...page, items: page.items.map(keyView) });
@@ -229,8 +258,12 @@ export const mountAdminRoutes = (app: Hono<AppEnv>, d: AppDeps): void => {
       parse(NewKey, await json(c)),
       now(),
     );
-    c.set("sensitive", true);
-    change(c, `api-keys/${key.id}`, { type: key.type, scopes: key.scopes });
+    await auditKey(
+      c,
+      `api-keys/${key.id}`,
+      { type: key.type, scopes: key.scopes },
+      () => revokeApiKey(d.apiKeys, key.id, now()),
+    );
     return c.json({ ...keyView(key), secret }, 201);
   });
   admin.post("/api-keys/:id/rotate", async (c) => {
@@ -245,14 +278,18 @@ export const mountAdminRoutes = (app: Hono<AppEnv>, d: AppDeps): void => {
       }),
       await json(c),
     );
+    const id = c.req.param("id");
+    const old = await d.apiKeys.get(id);
     const { key, secret } = await rotateApiKey(
       d.apiKeys,
-      c.req.param("id"),
+      id,
       graceSeconds * 1000,
       now(),
     );
-    c.set("sensitive", true);
-    change(c, `api-keys/${c.req.param("id")}`, { replacedBy: key.id });
+    await auditKey(c, `api-keys/${id}`, { replacedBy: key.id }, async () => {
+      await revokeApiKey(d.apiKeys, key.id, now());
+      if (old) await d.apiKeys.save(old);
+    });
     return c.json({ ...keyView(key), secret }, 201);
   });
   admin.post("/api-keys/:id/revoke", async (c) => {

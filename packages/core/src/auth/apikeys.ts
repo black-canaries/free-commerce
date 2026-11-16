@@ -38,7 +38,10 @@ export interface ApiKeyStore {
 }
 
 export class ApiKeyError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly code: "not_found" | "invalid" = "invalid",
+  ) {
     super(message);
     this.name = "ApiKeyError";
   }
@@ -110,7 +113,7 @@ export const revokeApiKey = async (
   now: number = Date.now(),
 ): Promise<void> => {
   const key = await store.get(id);
-  if (!key) throw new ApiKeyError("unknown key");
+  if (!key) throw new ApiKeyError("unknown key", "not_found");
   if (!key.revokedAt)
     await store.save({ ...key, revokedAt: new Date(now).toISOString() });
 };
@@ -131,16 +134,22 @@ export const rotateApiKey = async (
     old.revokedAt ||
     (old.expiresAt && Date.parse(old.expiresAt) <= now)
   )
-    throw new ApiKeyError("unknown, revoked or expired key");
+    throw new ApiKeyError("unknown, revoked or expired key", "not_found");
   const next = await createApiKey(
     store,
     { type: old.type, name: old.name, scopes: old.scopes },
     now,
   );
   const until = new Date(now + graceMs).toISOString();
-  await store.save({
-    ...old,
-    expiresAt: old.expiresAt && old.expiresAt < until ? old.expiresAt : until,
-  });
+  try {
+    await store.save({
+      ...old,
+      expiresAt: old.expiresAt && old.expiresAt < until ? old.expiresAt : until,
+    });
+  } catch (err) {
+    // Fail closed: never leave two live keys because the old one could not be retired.
+    await revokeApiKey(store, next.key.id, now);
+    throw err;
+  }
   return next;
 };
