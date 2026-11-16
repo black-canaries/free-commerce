@@ -2,6 +2,8 @@ import {
   addLine,
   cartTotals,
   createCart,
+  eraseCustomer,
+  exportCustomerData,
   getCart,
   type Repositories,
   removeLine,
@@ -16,7 +18,7 @@ import {
   SearchQuery,
   VariantId,
 } from "@free-commerce/schema";
-import type { Hono } from "hono";
+import type { Context, Hono } from "hono";
 import { z } from "zod";
 import type { AppDeps } from "./app.js";
 import { requireCustomer } from "./auth.js";
@@ -55,7 +57,8 @@ const AddLine = z.strictObject({
 
 export const mountStoreRoutes = (app: Hono<AppEnv>, d: AppDeps): void => {
   const store = app.basePath("/store");
-  const clock = () => new Date((d.now ?? Date.now)());
+  const now = d.now ?? Date.now;
+  const clock = () => new Date(now());
   const view = (cart: Awaited<ReturnType<typeof getCart>>) => ({
     ...cart,
     totals: cartTotals(cart),
@@ -155,6 +158,20 @@ export const mountStoreRoutes = (app: Hono<AppEnv>, d: AppDeps): void => {
   store.get("/customers/me", requireCustomer, (c) =>
     c.json({ id: c.var.auth.customer?.userId }),
   );
+  // Only the session's own customer: there is no id in the path to tamper with.
+  const me = (c: Context<AppEnv>) => {
+    const id = c.var.auth.customer?.userId ?? "";
+    return { id, actor: { type: "user", id } as const };
+  };
+  const personal = { db: d.db, auth: d.auth, hooks: d.personalData, now };
+  store.get("/customers/me/export", requireCustomer, async (c) => {
+    const { id, actor } = me(c);
+    return c.json(await exportCustomerData(personal, id, actor));
+  });
+  store.post("/customers/me/erase", requireCustomer, async (c) => {
+    const { id, actor } = me(c);
+    return c.json(await eraseCustomer(personal, id, actor));
+  });
   store.get("/orders", requireCustomer, async (c) =>
     c.json(await d.customerOrders(c.var.auth.customer?.userId ?? "")),
   );

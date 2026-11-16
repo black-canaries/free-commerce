@@ -95,6 +95,10 @@ export function createBetterAuth(config: BetterAuthConfig): AuthProvider {
       const { internalAdapter } = await instances[realm].$context;
       return (await internalAdapter.findUserById(userId)) !== null;
     },
+    async deleteUser(realm, userId) {
+      const { internalAdapter } = await instances[realm].$context;
+      await internalAdapter.deleteUser(userId); // also removes sessions and accounts
+    },
     async signOut(realm, token) {
       await instances[realm].api
         .signOut({ headers: bearerHeaders(token) })

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { DeliveryType, VariantId } from "./catalog.js";
+import { CustomerId } from "./customer.js";
 import { idSchema } from "./id.js";
 import { Money } from "./money.js";
 import { Timestamp } from "./time.js";
@@ -61,6 +62,8 @@ export const Order = z
     status: OrderStatus,
     paymentStatus: PaymentStatus,
     fulfilmentStatus: FulfilmentStatus,
+    /** Owner; dropped when the customer is anonymised (task 2.9). Absent on guest orders. */
+    customerId: CustomerId.optional(),
     lines: z.array(OrderLine).min(1),
     total: Money,
     paid: Money,

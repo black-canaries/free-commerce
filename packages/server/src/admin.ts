@@ -5,6 +5,8 @@ import {
   createApiKey,
   createInventory,
   createProduct,
+  eraseCustomer,
+  exportCustomerData,
   fulfil,
   isSafeKey,
   newAuditEntry,
@@ -219,6 +221,23 @@ export const mountAdminRoutes = (app: Hono<AppEnv>, d: AppDeps): void => {
   admin.delete("/media", remove("media"));
   admin.post("/digital-assets", upload("assets", ASSETS, limits.asset));
   admin.delete("/digital-assets", remove("assets"));
+
+  // Personal data (owner only, group "privacy"): export and erasure write their own audit entry (ids only).
+  const personal = () => ({
+    db: d.db,
+    auth: d.auth,
+    hooks: d.personalData,
+    now,
+  });
+  admin.get("/privacy/customers/:id/export", async (c) =>
+    c.json(await exportCustomerData(personal(), c.req.param("id"), actorOf(c))),
+  );
+  admin.post("/privacy/customers/:id/erase", async (c) => {
+    c.set("audited", true);
+    return c.json(
+      await eraseCustomer(personal(), c.req.param("id"), actorOf(c)),
+    );
+  });
 
   // Keys: the secret appears only in the create/rotate response, which idempotency never stores. The key
   // store is separate from `db`, so the audit entry is appended here and `undo` compensates if it fails:

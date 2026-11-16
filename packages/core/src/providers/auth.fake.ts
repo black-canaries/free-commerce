@@ -39,6 +39,13 @@ export function createFakeAuth(
         ([key, u]) => key.startsWith(`${realm}:`) && u.id === userId,
       );
     },
+    async deleteUser(realm, userId) {
+      for (const [key, u] of users)
+        if (key.startsWith(`${realm}:`) && u.id === userId) users.delete(key);
+      for (const [key, s] of sessions)
+        if (key.startsWith(`${realm}:`) && s.userId === userId)
+          sessions.delete(key);
+    },
     async signOut(realm, token) {
       sessions.delete(k(realm, token));
     },

@@ -4,6 +4,7 @@ import {
   type Database,
   newAuditEntry,
   type Page,
+  type PersonalDataHook,
   type Repository,
   ROLES,
   type RoleAssignment,
@@ -58,6 +59,8 @@ export interface AppDeps {
   /** Max bytes per upload, enforced while streaming. Defaults: media 5 MB, digital assets 50 MB. */
   uploadLimits?: { media: number; asset: number };
   /** Orders belonging to a customer (their `cus_` id); this is what keeps customers to their own orders. */
+  /** Stores of personal data owned by other modules (e.g. download grants); see `PersonalDataHook`. */
+  personalData?: PersonalDataHook[];
   customerOrders: (customerId: string) => Promise<Order[]>;
   /** Browser origins of storefronts and the admin app (CORS, and CSRF check for cookie-authenticated admin writes). */
   allowedOrigins?: string[];
@@ -102,6 +105,7 @@ export const createApp = (deps: AppDeps) => {
     apiKeys: deps.apiKeys,
     rateLimit: deps.rateLimit,
     cookies: deps.cookies,
+    customers: deps.db.customers,
     allowedOrigins: deps.allowedOrigins ?? [],
     now,
   };

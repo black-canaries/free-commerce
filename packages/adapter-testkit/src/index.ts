@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import { auditCases } from "./audit";
 import { discountCases } from "./discounts";
 import { inventoryCases } from "./inventory";
+import { privacyCases } from "./privacy";
 import { refundCases } from "./refunds";
 
 const product = (id: string, title = "Mug") => ({
@@ -39,6 +40,7 @@ const plain = (id: string, v = 1) => (v === 1 ? { id } : { id, v });
 const aggregates = {
   products: (id: string, v = 1) => product(id, `Mug ${v}`),
   carts: plain,
+  customers: plain,
   orders: plain,
   roles: (id: string, v = 1) => ({
     id,
@@ -86,6 +88,7 @@ export function repositoryConformance(
     discountCases(make);
     auditCases(make);
     refundCases(make);
+    privacyCases(make);
 
     it("commits transaction writes and returns the result", async () => {
       const db = await make();

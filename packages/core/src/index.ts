@@ -93,6 +93,14 @@ export {
   PricingError,
   resolvePrice,
 } from "./pricing/pricing";
+export {
+  eraseCustomer,
+  exportCustomerData,
+  type PersonalDataDeps,
+  type PersonalDataHook,
+  type PrivacyActor,
+  PrivacyError,
+} from "./privacy/privacy";
 export type {
   AuthProvider,
   AuthRealm,
@@ -136,6 +144,7 @@ export {
 } from "./providers/storage";
 export { isSafeKey, newStorageKey, validateUpload } from "./providers/upload";
 export type {
+  AddressRepository,
   CartRepository,
   Database,
   DiscountRepository,

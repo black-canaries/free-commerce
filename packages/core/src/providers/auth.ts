@@ -34,6 +34,8 @@ export interface AuthProvider {
   ): Promise<{ userId: string } | null>;
   /** Whether `userId` is a user of that realm (never true across realms). */
   userExists(realm: AuthRealm, userId: string): Promise<boolean>;
+  /** Removes the user, their credentials and every session (privacy erasure). Idempotent: an unknown user is a no-op. */
+  deleteUser(realm: AuthRealm, userId: string): Promise<void>;
   /** Idempotent: an unknown token is a no-op. */
   signOut(realm: AuthRealm, token: string): Promise<void>;
 }

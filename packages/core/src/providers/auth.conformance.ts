@@ -75,6 +75,16 @@ export function authConformance(name: string, make: () => AuthProvider): void {
       expect(await auth.userExists("customer", "nope")).toBe(false);
     });
 
+    it("deleteUser removes the account and its sessions, and is idempotent", async () => {
+      const { auth, userId } = await registered();
+      const s = await auth.signIn("customer", creds);
+      await auth.deleteUser("customer", userId);
+      await auth.deleteUser("customer", userId);
+      expect(await auth.authenticate("customer", s?.token ?? "")).toBeNull();
+      expect(await auth.signIn("customer", creds)).toBeNull();
+      expect(await auth.userExists("customer", userId)).toBe(false);
+    });
+
     it("sessions expire", async () => {
       vi.useFakeTimers();
       try {
