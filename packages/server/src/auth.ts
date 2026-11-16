@@ -4,8 +4,10 @@ import {
   type AuthProvider,
   type AuthRealm,
   type AuthSession,
+  type Repository,
   verifyApiKey,
 } from "@free-commerce/core";
+import type { Customer } from "@free-commerce/schema";
 import type { Context, Hono, MiddlewareHandler } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { z } from "zod";
@@ -15,6 +17,8 @@ import type { AppEnv, AuthState, RateLimitStore } from "./types.js";
 export interface AuthDeps {
   auth: AuthProvider;
   apiKeys: ApiKeyStore;
+  /** Registration records the customer here (their id is the auth user id). */
+  customers?: Repository<Customer>;
   rateLimit: RateLimitStore;
   /** Cookie attributes; storefronts on another origin need `sameSite: "None"` (requires `secure`). */
   cookies?: { sameSite: "Lax" | "None" | "Strict"; secure: boolean };
@@ -207,6 +211,19 @@ export const mountAuthRoutes = (
       // A taken email signs up "successfully" at some providers; the sign-in below is what tells them apart.
       const session = await deps.auth.signIn(realm, body);
       if (!session) throw new HttpError("conflict", "Registration failed");
+      const { userId } = session;
+      if (deps.customers && !(await deps.customers.get(userId)))
+        await deps.customers.save({
+          id: userId,
+          kind: "registered",
+          email: body.email,
+          name: body.name,
+          phone: null,
+          taxId: null,
+          defaultAddressId: null,
+          createdAt: new Date(deps.now()).toISOString(),
+          anonymisedAt: null,
+        });
       return respond(c, session, body.mode, 201);
     });
 
