@@ -168,8 +168,18 @@ export const mountStoreRoutes = (app: Hono<AppEnv>, d: AppDeps): void => {
     const { id, actor } = me(c);
     return c.json(await exportCustomerData(personal, id, actor));
   });
+  // Irreversible, so a stolen session is not enough: the password is checked again, and tries are limited.
   store.post("/customers/me/erase", requireCustomer, async (c) => {
+    const { password } = parse(
+      z.strictObject({ password: z.string().min(1).max(256) }),
+      await json(c),
+    );
     const { id, actor } = me(c);
+    const { count } = await d.rateLimit.hit(`erase:${id}`, 15 * 60_000);
+    if (count > 5) throw new HttpError("rate_limited", "Too many attempts");
+    const email = (await d.db.customers.get(id))?.email;
+    const ok = email && (await d.auth.signIn("customer", { email, password }));
+    if (!ok) throw new HttpError("unauthenticated", "Password required");
     return c.json(await eraseCustomer(personal, id, actor));
   });
   store.get("/orders", requireCustomer, async (c) =>

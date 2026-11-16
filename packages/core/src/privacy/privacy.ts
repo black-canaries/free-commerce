@@ -53,7 +53,7 @@ const audit = (
 /**
  * @experimental Everything held about one customer, as JSON: profile, saved addresses, orders and each
  * hook's data. Looks up by `customerId` only, so a caller can never reach another customer's rows. Never
- * includes auth credentials or sessions, or internal refund fingerprints. The export is audited first: if
+ * includes auth credentials or sessions, or internal refund fingerprints. Orders keep `paymentId`: it is the customer's own payment reference, not a secret. The export is audited first: if
  * the audit write fails nothing is released.
  */
 export async function exportCustomerData(
@@ -96,18 +96,24 @@ const ANONYMOUS = {
 /**
  * @experimental Anonymises a customer: nulls the profile PII, deletes addresses, drops the owner link from
  * orders (amounts, tax and lines stay, so accounting is intact), runs hooks, audits and queues
- * `customer.anonymised` (id only), all in one transaction. The auth account and its sessions are removed
- * first (idempotent), so a crash in between leaves a customer who cannot sign in and a retry that finishes
- * the job. Repeating it is a no-op returning `erased: false`.
+ * `customer.anonymised` (id only), all in one transaction. Then the auth account and its sessions are
+ * removed (idempotent): a crash in between leaves anonymised data with a login that a retry removes, never
+ * a locked-out customer with intact data. Repeating it is a no-op returning `erased: false`. A login with
+ * no customer row (registered before rows existed) is removed too.
  */
 export async function eraseCustomer(
   d: PersonalDataDeps,
   customerId: string,
   actor: PrivacyActor,
 ): Promise<{ erased: boolean }> {
-  const { kind } = await load(d.db, customerId);
-  if (kind === "registered") await d.auth.deleteUser("customer", customerId);
-  return d.db.transaction(async (tx) => {
+  if (!(await d.db.customers.get(customerId))) {
+    // An account registered before customer rows existed: nothing is stored but the login, so remove that.
+    if (!(await d.auth.userExists("customer", customerId)))
+      throw new PrivacyError();
+    await d.auth.deleteUser("customer", customerId);
+    return { erased: false };
+  }
+  const result = await d.db.transaction(async (tx) => {
     const customer = await load(tx, customerId);
     if (customer.anonymisedAt !== null) return { erased: false };
     await tx.addresses.deleteByCustomer(customerId);
@@ -129,4 +135,7 @@ export async function eraseCustomer(
     await tx.audit.append(audit(d, actor, "erase", customerId));
     return { erased: true };
   });
+  // After the commit: if this fails the data is already gone and a retry (idempotent) finishes the login.
+  await d.auth.deleteUser("customer", customerId);
+  return result;
 }

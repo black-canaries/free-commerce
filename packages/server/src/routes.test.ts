@@ -413,7 +413,20 @@ describe("personal data", () => {
       (await send(t, "GET", "/store/customers/me/export", t.pk)).res.status,
     ).toBe(401);
 
-    const gone = await send(t, "POST", "/store/customers/me/erase", ada.h, {});
+    for (const body of [{}, { password: "wrong horse" }]) {
+      const refused = await send(
+        t,
+        "POST",
+        "/store/customers/me/erase",
+        ada.h,
+        body,
+      );
+      expect(refused.res.status).toBe(body.password ? 401 : 400);
+    }
+    expect((await t.db.customers.get(ada.id))?.email).toBe(email);
+    const gone = await send(t, "POST", "/store/customers/me/erase", ada.h, {
+      password: "correct horse",
+    });
     expect(gone.body).toEqual({ erased: true });
     expect(
       (await send(t, "GET", "/store/customers/me/export", ada.h)).res.status,
@@ -424,6 +437,22 @@ describe("personal data", () => {
     const audit = JSON.stringify((await t.db.audit.list({ limit: 10 })).items);
     expect(audit).toContain("privacy.erase");
     expect(audit).not.toContain(email);
+  });
+
+  it("an account with no customer row can still be erased by an owner; unknown ids stay 404", async () => {
+    const t = await setup();
+    const { userId } = await t.auth.signUp("customer", {
+      email: "old@example.com",
+      password: "correct horse",
+      name: "Old",
+    });
+    const owner = await as(t, "owner");
+    const path = `/admin/privacy/customers/${userId}/erase`;
+    expect((await send(t, "POST", path, owner.h, {})).body).toEqual({
+      erased: false,
+    });
+    expect(await t.auth.userExists("customer", userId)).toBe(false);
+    expect((await send(t, "POST", path, owner.h, {})).res.status).toBe(404);
   });
 
   it("registration for a taken email creates no second customer row", async () => {

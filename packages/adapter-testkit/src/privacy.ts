@@ -174,7 +174,7 @@ export function privacyCases(make: () => Database | Promise<Database>): void {
           erased.push(id);
         },
       };
-      const { deps, db, mine } = await world([hook]);
+      const { deps, db, auth, mine } = await world([hook]);
       await expect(eraseCustomer(deps, mine, actor)).rejects.toThrow("boom");
       expect(await db.customers.get(mine)).toMatchObject({
         email: creds.email,
@@ -185,6 +185,7 @@ export function privacyCases(make: () => Database | Promise<Database>): void {
         mine,
       );
       expect(await db.outbox.pending(5)).toEqual([]);
+      expect(await auth.signIn("customer", creds)).not.toBeNull(); // not locked out: they can retry
       broken = false;
       expect(await eraseCustomer(deps, mine, actor)).toEqual({ erased: true });
       expect(erased).toEqual([mine]);
