@@ -373,3 +373,143 @@ describe("api keys", () => {
     expect(bad.res.status).toBe(400);
   });
 });
+
+describe("personal data", () => {
+  const email = "ada@example.com";
+  const register = async (t: T, addr = email) => {
+    const res = await send(t, "POST", "/store/auth/register", t.pk, {
+      email: addr,
+      password: "correct horse",
+      name: "Ada Lovelace",
+      mode: "bearer",
+    });
+    expect(res.res.status).toBe(201);
+    return {
+      id: res.body.userId as string,
+      h: { ...t.pk, authorization: `Bearer ${res.body.token}` },
+    };
+  };
+  const withOrder = async (t: T, id: string) => {
+    await t.db.addresses.save({
+      id: `addr_${id}`,
+      customerId: id,
+      name: "Ada Lovelace",
+      line1: "12 Crooked Lane",
+      city: "London",
+      country: "GB",
+    });
+    await t.db.orders.save({
+      id: `ord_${id}`,
+      customerId: id,
+      total: 500,
+    } as never);
+  };
+
+  it("a customer exports only their own data and can erase it; the session dies", async () => {
+    const t = await setup();
+    const ada = await register(t);
+    const bob = await register(t, "bob@example.com");
+    await withOrder(t, ada.id);
+    await withOrder(t, bob.id);
+    const out = await send(t, "GET", "/store/customers/me/export", ada.h);
+    expect(out.body.customer.email).toBe(email);
+    expect(out.body.orders.map((o: { id: string }) => o.id)).toEqual([
+      `ord_${ada.id}`,
+    ]);
+    expect(JSON.stringify(out.body)).not.toMatch(/bob|password|token/i);
+    expect(
+      (await send(t, "GET", "/store/customers/me/export", t.pk)).res.status,
+    ).toBe(401);
+
+    for (const body of [{}, { password: "wrong horse" }]) {
+      const refused = await send(
+        t,
+        "POST",
+        "/store/customers/me/erase",
+        ada.h,
+        body,
+      );
+      expect(refused.res.status).toBe(body.password ? 401 : 400);
+    }
+    expect((await t.db.customers.get(ada.id))?.email).toBe(email);
+    const gone = await send(t, "POST", "/store/customers/me/erase", ada.h, {
+      password: "correct horse",
+    });
+    expect(gone.body).toEqual({ erased: true });
+    expect(
+      (await send(t, "GET", "/store/customers/me/export", ada.h)).res.status,
+    ).toBe(401);
+    expect((await t.db.customers.get(ada.id))?.email).toBeNull();
+    expect((await t.db.customers.get(bob.id))?.email).toBe("bob@example.com");
+    expect(await t.db.addresses.listByCustomer(bob.id)).toHaveLength(1);
+    const audit = JSON.stringify((await t.db.audit.list({ limit: 10 })).items);
+    expect(audit).toContain("privacy.erase");
+    expect(audit).not.toContain(email);
+  });
+
+  it("an account with no customer row can still be erased by an owner; unknown ids stay 404", async () => {
+    const t = await setup();
+    const { userId } = await t.auth.signUp("customer", {
+      email: "old@example.com",
+      password: "correct horse",
+      name: "Old",
+    });
+    const owner = await as(t, "owner");
+    const path = `/admin/privacy/customers/${userId}/erase`;
+    expect((await send(t, "POST", path, owner.h, {})).body).toEqual({
+      erased: false,
+    });
+    expect(await t.auth.userExists("customer", userId)).toBe(false);
+    expect((await send(t, "POST", path, owner.h, {})).res.status).toBe(404);
+  });
+
+  it("registration for a taken email creates no second customer row", async () => {
+    const t = await setup();
+    await register(t);
+    const again = await send(t, "POST", "/store/auth/register", t.pk, {
+      email,
+      password: "another pass",
+      name: "Mallory",
+    });
+    expect(again.res.status).toBe(409);
+    expect((await t.db.customers.list({ limit: 10 })).items).toHaveLength(1);
+  });
+
+  it("only owners reach the admin export and erase; unknown ids are 404", async () => {
+    const t = await setup();
+    const ada = await register(t);
+    const owner = await as(t, "owner");
+    const staff = await as(t, "staff");
+    const path = `/admin/privacy/customers/${ada.id}`;
+    expect((await send(t, "GET", `${path}/export`, staff.h)).res.status).toBe(
+      403,
+    );
+    expect(
+      (await send(t, "POST", `${path}/erase`, staff.h, {})).res.status,
+    ).toBe(403);
+    expect((await send(t, "GET", `${path}/export`, t.sk)).res.status).toBe(403);
+    expect(
+      (await send(t, "GET", `${path}/export`, owner.h)).body.customer.name,
+    ).toBe("Ada Lovelace");
+    expect((await send(t, "POST", `${path}/erase`, owner.h, {})).body).toEqual({
+      erased: true,
+    });
+    expect((await send(t, "POST", `${path}/erase`, owner.h, {})).body).toEqual({
+      erased: false,
+    });
+    expect(
+      (
+        await send(
+          t,
+          "GET",
+          "/admin/privacy/customers/cus_nope/export",
+          owner.h,
+        )
+      ).res.status,
+    ).toBe(404);
+    const actions = (await t.db.audit.list({ limit: 10 })).items
+      .filter((e) => e.actor.id === owner.userId)
+      .map((e) => e.action);
+    expect(actions.sort()).toEqual(["privacy.erase", "privacy.export"]);
+  });
+});

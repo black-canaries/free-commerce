@@ -3,6 +3,7 @@ import {
   CartError,
   CatalogError,
   DownloadError,
+  PrivacyError,
   ProviderError,
 } from "@free-commerce/core";
 import type { ApiError, ErrorCode } from "@free-commerce/schema";
@@ -75,6 +76,8 @@ export const fromDomain = (err: unknown): HttpError | undefined => {
       err.code === "not_found" ? "not_found" : "validation_failed",
       err.message,
     );
+  if (err instanceof PrivacyError)
+    return new HttpError("not_found", err.message);
   if (err instanceof ApiKeyError)
     return new HttpError(
       err.code === "not_found" ? "not_found" : "validation_failed",

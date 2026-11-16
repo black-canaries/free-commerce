@@ -31,6 +31,7 @@ export const ADMIN_GROUPS = {
   "api-keys": "keys",
   team: "team",
   audit: "audit",
+  privacy: "privacy",
 } as const;
 export type AdminGroup = (typeof ADMIN_GROUPS)[keyof typeof ADMIN_GROUPS];
 
@@ -43,10 +44,11 @@ const everything = [
   "keys",
   "team",
   "audit",
+  "privacy",
 ] as const;
 const day = ["system", "catalog", "orders", "discounts"] as const;
 
-/** What each role may do per group; absent means denied. Owner-only: keys, team, audit, settings writes. */
+/** What each role may do per group; absent means denied. Owner-only: keys, team, audit, privacy (personal data export and erasure), settings writes. */
 const GRANTS: Record<Role, Partial<Record<AdminGroup, readonly Access[]>>> = {
   owner: Object.fromEntries(everything.map((g) => [g, ["read", "write"]])),
   staff: {

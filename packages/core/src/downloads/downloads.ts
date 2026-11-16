@@ -77,7 +77,7 @@ export interface DownloadDeps {
 }
 
 /**
- * @experimental Digital delivery (ADR 0031). Files are reachable only through a grant: `url` checks the
+ * @experimental Digital delivery (ADR 0033). Files are reachable only through a grant: `url` checks the
  * caller's proof, consumes one download atomically, and returns a signed URL that expires in a minute.
  */
 export function createDownloads(d: DownloadDeps) {

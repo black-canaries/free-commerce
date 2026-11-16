@@ -42,6 +42,8 @@ export const CheckoutInput = z.strictObject({
   cartId: idSchema("cart"),
   /** `Cart.updatedAt` when the customer saw the prices; a cart edited since is refused. */
   cartUpdatedAt: Timestamp,
+  /** The signed-in buyer (from the session, never the client body); links the order to their data export. */
+  customerId: idSchema("cus").optional(),
   attempt: z.number().int().min(0).max(1023).default(0),
   adjustments: z
     .strictObject({
@@ -186,6 +188,7 @@ function buildOrder(
       status: "open",
       paymentStatus: "paid",
       fulfilmentStatus: "unfulfilled",
+      customerId: input.customerId,
       lines: reserved.lines.map((l) => ({
         id: l.id,
         variantId: l.variantId,
