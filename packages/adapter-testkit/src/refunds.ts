@@ -14,9 +14,9 @@ const actor = { type: "user", id: "usr_1" } as const;
 
 async function world(
   make: () => Database | Promise<Database>,
-  over: { qty?: number; digitalOnly?: boolean } = {},
+  over: { qty?: number; digitalOnly?: boolean; free?: boolean } = {},
 ) {
-  const { qty = 3, digitalOnly = false } = over;
+  const { qty = 3, digitalOnly = false, free = false } = over;
   const db = await make();
   const fake = createFakePayments();
   const phys = newId("var");
@@ -54,17 +54,25 @@ async function world(
       unitPrice: { amount: unit, currency: "USD" },
     },
   ];
+  const pick = () => {
+    if (free) return [lines[0]];
+    return digitalOnly ? [lines[1]] : lines;
+  };
+  const sum = (() => {
+    if (free) return { amount: 0, currency: "USD" };
+    return digitalOnly ? { amount: unit, currency: "USD" } : total;
+  })();
   const order = Order.parse({
     id: newId("ord"),
     number: 1,
     status: "open",
     paymentStatus: "paid",
-    fulfilmentStatus: "partially_fulfilled",
-    lines: digitalOnly ? [lines[1]] : lines,
-    total: digitalOnly ? { amount: unit, currency: "USD" } : total,
-    paid: digitalOnly ? { amount: unit, currency: "USD" } : total,
+    fulfilmentStatus: free ? "unfulfilled" : "partially_fulfilled",
+    lines: pick(),
+    total: sum,
+    paid: sum,
     refunded: { amount: 0, currency: "USD" },
-    paymentId: p.id,
+    paymentId: free ? undefined : p.id,
     createdAt: TS,
     updatedAt: TS,
   });
@@ -273,7 +281,10 @@ export function refundCases(make: () => Database | Promise<Database>): void {
       });
       await expect(
         refunds.refund({ orderId: w.order.id, key: "k", actor }),
-      ).rejects.toBeInstanceOf(ProviderError);
+      ).rejects.toMatchObject({
+        code: "refund_failed",
+        cause: expect.any(ProviderError),
+      });
       expect(await w.get()).toEqual(w.order);
     });
 
@@ -295,6 +306,43 @@ export function refundCases(make: () => Database | Promise<Database>): void {
         expect(await w.stock()).toBe(8);
         expect(await w.events()).toEqual(["order.refunded"]);
       }
+    });
+
+    it("concurrent refunds with different keys never exceed paid; the same key applies once", async () => {
+      const w = await world(make);
+      const part = (key: string) => w.refund(key, { amount: 1500 });
+      const out = await Promise.allSettled([part("a"), part("b"), part("c")]);
+      expect(out.filter((r) => r.status === "fulfilled")).toHaveLength(2);
+      expect((await w.get()).refunded.amount).toBe(3000);
+      expect(await w.audits()).toBe(2);
+      const w2 = await world(make);
+      await Promise.all([
+        w2.refund("k", { amount: 700 }),
+        w2.refund("k", { amount: 700 }),
+      ]);
+      expect((await w2.get()).refunded.amount).toBe(700);
+      expect(await w2.audits()).toBe(1);
+      expect(await w2.events()).toEqual(["order.refunded"]);
+    });
+
+    it("a reused key with different content is refused, not replayed", async () => {
+      const w = await world(make);
+      await w.refund("k", { amount: 100 });
+      await expect(w.refund("k", { amount: 200 })).rejects.toThrow(
+        /key_reused/,
+      );
+      expect((await w.get()).refunded.amount).toBe(100);
+    });
+
+    it("nothing left to refund is refused, and a free order can be cancelled", async () => {
+      const w = await world(make);
+      await w.refund("a");
+      await expect(w.refund("b")).rejects.toThrow(/nothing_to_refund/);
+      expect(await w.events()).toEqual(["order.refunded"]);
+      const free = await world(make, { free: true });
+      expect((await free.refund("c", { cancel: true })).status).toBe(
+        "cancelled",
+      );
     });
   });
 }

@@ -67,7 +67,7 @@ export const Order = z
     refunded: Money,
     /** Provider payment that funded the order; refunds go through it. */
     paymentId: z.string().min(1).optional(),
-    /** Idempotency keys of the admin refunds already applied (replays are no-ops). */
+    /** Fingerprints (key plus content) of the admin refunds already applied; a replay is a no-op, a reused key with other content is refused. */
     refunds: z.array(z.string()).optional(),
     /** What the customer agreed to at checkout. Immediate delivery is recorded only when digital lines were bought. */
     consents: z

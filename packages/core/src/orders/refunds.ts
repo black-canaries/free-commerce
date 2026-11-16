@@ -17,10 +17,12 @@ export class RefundError extends Error {
       | "no_payment"
       | "invalid_restock"
       | "refund_failed"
+      | "key_reused"
       | "refused",
     readonly detail: string,
+    cause?: unknown,
   ) {
-    super(`${code}: ${detail}`);
+    super(`${code}: ${detail}`, { cause });
     this.name = "RefundError";
   }
 }
@@ -46,6 +48,19 @@ export interface RefundInput {
   cancel?: boolean;
   /** Units to put back on the shelf, per order line (managed variants only). */
   restock?: { lineId: string; quantity: number }[];
+}
+
+/** What a key was used for; the same key with different content is a caller bug, not a replay. */
+const fingerprint = (i: RefundInput) =>
+  JSON.stringify([i.key, i.amount ?? null, !!i.cancel, i.restock ?? []]);
+
+/** The order if `input` replays an applied action, `null` if the key is new; throws if the key was used differently. */
+function replayOf(order: Order, input: RefundInput) {
+  const prior = order.refunds?.find((f) => f.startsWith(`["${input.key}",`));
+  if (!prior) return null;
+  if (prior !== fingerprint(input))
+    throw new RefundError("key_reused", input.key);
+  return order;
 }
 
 /** A given amount is a positive whole number and never combined with `cancel`, which refunds the remainder. */
@@ -88,11 +103,15 @@ export function createRefunds(d: RefundDeps) {
   /** Asks the provider; idempotent by key, so a retry after a later failure reuses the same refund. */
   async function moveMoney(order: Order, key: string, money: Money) {
     if (!order.paymentId) throw new RefundError("no_payment", order.id);
-    const r = await d.payments.refund({
-      idempotencyKey: `${order.id}:refund:${key}`,
-      paymentId: order.paymentId,
-      amount: money,
-    });
+    const r = await d.payments
+      .refund({
+        idempotencyKey: `${order.id}:refund:${key}`,
+        paymentId: order.paymentId,
+        amount: money,
+      })
+      .catch((e: unknown) => {
+        throw new RefundError("refund_failed", String(e), e);
+      });
     if (r.state === "failed") throw new RefundError("refund_failed", r.id);
   }
 
@@ -133,7 +152,8 @@ export function createRefunds(d: RefundDeps) {
     plan: Plan,
   ) {
     const fresh = (await tx.orders.get(input.orderId)) as Order;
-    if (fresh.refunds?.includes(input.key)) return fresh;
+    const replay = replayOf(fresh, input);
+    if (replay) return replay;
     const at = toTimestamp(now());
     const next = Order.parse({
       ...apply(fresh, input, money),
@@ -141,7 +161,7 @@ export function createRefunds(d: RefundDeps) {
         ...l,
         restocked: (l.restocked ?? 0) + (plan.get(l.id) ?? 0),
       })),
-      refunds: [...(fresh.refunds ?? []), input.key],
+      refunds: [...(fresh.refunds ?? []), fingerprint(input)],
       updatedAt: at,
     });
     await restock(tx, fresh, plan);
@@ -181,8 +201,11 @@ export function createRefunds(d: RefundDeps) {
       assertAmount(input);
       const order = (await d.db.orders.get(input.orderId)) as Order | null;
       if (!order) throw new RefundError("not_found", input.orderId);
-      if (order.refunds?.includes(input.key)) return order;
+      const replay = replayOf(order, input);
+      if (replay) return replay;
       const sum = input.amount ?? order.paid.amount - order.refunded.amount;
+      if (sum === 0 && !input.cancel)
+        throw new RefundError("refused", "nothing_to_refund");
       const money =
         sum > 0 ? { amount: sum, currency: order.paid.currency } : null;
       const plan = await planRestock(order, input);

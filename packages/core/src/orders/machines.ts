@@ -101,6 +101,11 @@ export const settle = (order: Order): Order => {
   };
 };
 
+/** Nothing captured is left unrefunded: unpaid, failed, fully refunded, or a free order that holds no money. */
+const moneySettled = (o: Order): boolean =>
+  ["unpaid", "failed", "refunded"].includes(o.paymentStatus) ||
+  (o.paymentStatus === "paid" && o.paid.amount === 0);
+
 export const transitionLifecycle = (order: Order, to: OrderStatus): Result => {
   const from = order.status;
   const refuse = (reason: TransitionReason) =>
@@ -113,8 +118,7 @@ export const transitionLifecycle = (order: Order, to: OrderStatus): Result => {
   }
   // Cancelling must not strand money or leave a fulfilled order cancelled.
   if (to === "cancelled") {
-    if (!["unpaid", "failed", "refunded"].includes(order.paymentStatus))
-      return refuse("payment_unsettled");
+    if (!moneySettled(order)) return refuse("payment_unsettled");
     if (deriveFulfilment(order.lines) === "fulfilled")
       return refuse("already_fulfilled");
   }
