@@ -192,11 +192,21 @@ describe("lifecycle guards", () => {
       "partially_refunded",
     ] as const)
       expect(
-        transitionLifecycle(make({ paymentStatus }), "cancelled"),
+        transitionLifecycle(
+          make({ paymentStatus, paid: usd(1000) }),
+          "cancelled",
+        ),
       ).toMatchObject({
         ok: false,
         error: { reason: "payment_unsettled" },
       });
+    // A free order holds no money, so it may be cancelled.
+    expect(
+      transitionLifecycle(
+        make({ paymentStatus: "paid", total: usd(0), paid: usd(0) }),
+        "cancelled",
+      ).ok,
+    ).toBe(true);
     const fulfilled = make({
       paymentStatus: "refunded",
       paid: usd(1000),

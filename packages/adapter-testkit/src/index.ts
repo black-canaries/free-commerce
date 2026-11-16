@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import { auditCases } from "./audit";
 import { discountCases } from "./discounts";
 import { inventoryCases } from "./inventory";
+import { refundCases } from "./refunds";
 
 const product = (id: string, title = "Mug") => ({
   ...createProduct(
@@ -84,6 +85,7 @@ export function repositoryConformance(
     inventoryCases(make);
     discountCases(make);
     auditCases(make);
+    refundCases(make);
 
     it("commits transaction writes and returns the result", async () => {
       const db = await make();
