@@ -1,5 +1,7 @@
 import type {
+  DigitalAsset,
   DiscountCode,
+  DownloadGrant,
   PageQuery,
   Product,
   Reservation,
@@ -101,8 +103,26 @@ export interface DiscountRepository extends Repository<DiscountCode> {
   release(redemptionId: string): Promise<void>;
 }
 
+/** @experimental `ok: false` reasons, in the order they are checked; `not_found` also covers a grant that never existed. */
+export type ConsumeResult =
+  | { ok: true; grant: DownloadGrant }
+  | { ok: false; reason: "not_found" | "revoked" | "expired" | "exhausted" };
+
+/**
+ * @experimental Download grants. `consume` MUST be atomic (SQL: one conditional UPDATE): of any number of
+ * concurrent calls at most `maxDownloads` succeed, none after `expiresAt <= now` or `revokedAt`. Core's
+ * `decideConsume` is the rule; adapters apply it as the update's condition. `find` returns every grant
+ * with that value, unordered.
+ */
+export interface DownloadGrantRepository extends Repository<DownloadGrant> {
+  find(by: "orderId" | "accessHash", value: string): Promise<DownloadGrant[]>;
+  consume(id: string, now: string): Promise<ConsumeResult>;
+}
+
 /** @experimental */
 export interface Repositories {
+  assets: Repository<DigitalAsset>;
+  grants: DownloadGrantRepository;
   roles: Repository<RoleAssignment>;
   audit: AuditRepository;
   discounts: DiscountRepository;

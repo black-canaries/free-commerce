@@ -253,7 +253,15 @@ describe("uploads and file serving", () => {
     const pdf = new Uint8Array(150);
     pdf.set([0x25, 0x50, 0x44, 0x46]);
     expect(
-      (await up(t, "/admin/digital-assets", pdf, "application/pdf", h)).status,
+      (
+        await up(
+          t,
+          "/admin/digital-assets?filename=a.pdf",
+          pdf,
+          "application/pdf",
+          h,
+        )
+      ).status,
     ).toBe(201);
     const del = await send(t, "DELETE", `/admin/media?key=${key}`, h);
     expect(del.res.status).toBe(200);

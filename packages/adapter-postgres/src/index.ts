@@ -6,6 +6,8 @@ import {
   type Database,
   type DiscountRepository,
   type DomainEvent,
+  type DownloadGrantRepository,
+  decideConsume,
   decideReserveRetry,
   decideSettle,
   type Entity,
@@ -18,6 +20,7 @@ import {
 } from "@free-commerce/core";
 import {
   type DiscountCode,
+  type DownloadGrant,
   type Reservation,
   toTimestamp,
 } from "@free-commerce/schema";
@@ -39,8 +42,12 @@ const tables = {
   carts: docTable("carts"),
   orders: docTable("orders"),
   roles: docTable("roles"),
+  assets: docTable("assets"),
 } satisfies Record<
-  Exclude<keyof Repositories, "inventory" | "outbox" | "discounts" | "audit">,
+  Exclude<
+    keyof Repositories,
+    "inventory" | "outbox" | "discounts" | "audit" | "grants"
+  >,
   unknown
 >;
 
@@ -54,6 +61,7 @@ function docTable(name: string) {
 
 const discountTable = docTable("discounts");
 const auditTable = docTable("audit");
+const grantsTable = docTable("grants");
 const apiKeysTable = docTable("api_keys");
 const redemptions = pgTable("redemptions", {
   id: text("id").primaryKey(),
@@ -282,6 +290,37 @@ const discounts = (db: Db): DiscountRepository => {
   };
 };
 
+/**
+ * Grants are JSON documents indexed by order and by link hash. `consume` is one conditional UPDATE (the rule of
+ * `decideConsume`, as SQL), so concurrent downloads can never exceed the limit; ISO timestamps compare as text
+ * under collation "C". When it matches nothing, a read says why.
+ */
+const grants = (db: Db): DownloadGrantRepository => {
+  const base = repository<DownloadGrant>(db, grantsTable);
+  const consume: DownloadGrantRepository["consume"] = async (id, now) => {
+    const rows = (await db.execute(sql`
+      update grants set doc = jsonb_set(doc, '{downloads}', to_jsonb((doc->>'downloads')::int + 1))
+      where id = ${id} and doc->>'revokedAt' is null
+        and (doc->>'expiresAt' is null or (doc->>'expiresAt') collate "C" > ${now})
+        and (doc->>'maxDownloads' is null or (doc->>'downloads')::int < (doc->>'maxDownloads')::int)
+      returning doc`)) as unknown as { doc: DownloadGrant }[];
+    if (rows[0]) return { ok: true, grant: rows[0].doc };
+    const out = decideConsume(await base.get(id), now);
+    return out.ok ? consume(id, now) : out;
+  };
+  return {
+    ...base,
+    consume,
+    async find(by, value) {
+      const rows = await db
+        .select({ doc: grantsTable.doc })
+        .from(grantsTable)
+        .where(sql`${grantsTable.doc}->>${sql.raw(`'${by}'`)} = ${value}`);
+      return rows.map((r) => r.doc as DownloadGrant);
+    },
+  };
+};
+
 /** Append-only JSON documents; ids sort by time, so newest-first is `id desc`. */
 const audit = (db: Db): AuditRepository => ({
   async append(entry) {
@@ -366,6 +405,8 @@ const bind = (db: Db): Repositories => ({
   orders: repository(db, tables.orders),
   roles: repository(db, tables.roles),
   audit: audit(db),
+  assets: repository(db, tables.assets),
+  grants: grants(db),
   outbox: outbox(db),
 });
 

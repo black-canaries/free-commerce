@@ -2,6 +2,7 @@ import {
   type ApiKeyStore,
   type AuthProvider,
   type Database,
+  type Downloads,
   newAuditEntry,
   type Page,
   type Repository,
@@ -45,6 +46,8 @@ export interface AppDeps {
   auth: AuthProvider;
   apiKeys: ApiKeyStore;
   db: Database;
+  /** Digital delivery (grants, signed URLs, assets); the checkout and refund services share the same instance. */
+  downloads: Downloads;
   search: SearchProvider;
   /** Private object storage for media and digital assets (every read is a signed URL). */
   storage: StorageProvider;
@@ -125,6 +128,7 @@ export const createApp = (deps: AppDeps) => {
         "content-type",
         "authorization",
         "x-api-key",
+        "x-download-token",
         "idempotency-key",
         "x-request-id",
       ],
@@ -151,7 +155,7 @@ export const createApp = (deps: AppDeps) => {
   const sizeLimit: MiddlewareHandler<AppEnv> = (c, next) => {
     const maxSize = /^\/admin\/media\/?$/.test(c.req.path)
       ? uploads.media
-      : /^\/admin\/digital-assets\/?$/.test(c.req.path)
+      : /^\/admin\/digital-assets(\/[^/]+)?\/?$/.test(c.req.path)
         ? uploads.asset
         : 1_000_000;
     return bodyLimit({

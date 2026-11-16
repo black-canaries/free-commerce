@@ -16,7 +16,7 @@ import {
   SearchQuery,
   VariantId,
 } from "@free-commerce/schema";
-import type { Hono } from "hono";
+import type { Context, Hono } from "hono";
 import { z } from "zod";
 import type { AppDeps } from "./app.js";
 import { requireCustomer } from "./auth.js";
@@ -151,6 +151,31 @@ export const mountStoreRoutes = (app: Hono<AppEnv>, d: AppDeps): void => {
       ),
     ),
   );
+
+  // Downloads: a customer session opens the grants of their own orders; a guest presents the link token from
+  // the delivery email in a header (never a URL, which would reach logs). Anything else is a 404.
+  const downloadAccess = async (c: Context<AppEnv>) => {
+    const token = c.req.header("x-download-token");
+    if (token) return { token };
+    const id = c.var.auth.customer?.userId;
+    if (!id)
+      throw new HttpError(
+        "unauthenticated",
+        "Customer login or download link required",
+      );
+    return { orderIds: (await d.customerOrders(id)).map((o) => o.id) };
+  };
+  store.get("/downloads", async (c) =>
+    c.json({ items: await d.downloads.list(await downloadAccess(c)) }),
+  );
+  store.post("/downloads/:id/url", async (c) => {
+    const out = await d.downloads.url(
+      await downloadAccess(c),
+      c.req.param("id"),
+    );
+    c.set("sensitive", true); // a signed URL is a credential: never stored for replay
+    return c.json(out);
+  });
 
   store.get("/customers/me", requireCustomer, (c) =>
     c.json({ id: c.var.auth.customer?.userId }),

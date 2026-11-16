@@ -6,6 +6,7 @@ import { Timestamp } from "./time.js";
 export const ProductId = idSchema("prod");
 export const VariantId = idSchema("var");
 export const CollectionId = idSchema("col");
+export const DigitalAssetId = idSchema("asset");
 
 export const ProductStatus = z.enum(["draft", "active", "archived"]);
 export type ProductStatus = z.infer<typeof ProductStatus>;
@@ -54,6 +55,8 @@ export const Variant = z
       })
       .optional(),
     prices: z.array(Price),
+    /** The file a `digital` variant delivers; see `DigitalAsset`. */
+    digitalAssetId: DigitalAssetId.optional(),
   })
   .superRefine((v, ctx) => {
     const bad = (path: (string | number)[], message: string) =>
@@ -64,6 +67,8 @@ export const Variant = z
       if (v.dimensionsMm !== undefined)
         bad(["dimensionsMm"], "only physical variants have dimensions");
     }
+    if (v.deliveryType !== "digital" && v.digitalAssetId !== undefined)
+      bad(["digitalAssetId"], "only digital variants deliver an asset");
     if (!names(v.prices.map((p) => p.currency)))
       bad(["prices"], "one price per currency");
     v.prices.forEach((p, i) => {

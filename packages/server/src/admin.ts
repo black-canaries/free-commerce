@@ -20,6 +20,7 @@ import {
   validateUpload,
 } from "@free-commerce/core";
 import {
+  type DigitalAsset,
   Order,
   PageQuery,
   Product,
@@ -54,6 +55,21 @@ const NewKey = z.strictObject({
 
 /** Never includes the hash. */
 const keyView = ({ hash: _hash, ...key }: ApiKey) => key;
+
+/** Becomes the customer's file name and a response header: no path separators, quotes or control characters. */
+const AssetName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(200)
+  .refine(
+    (n) =>
+      !(
+        /[/"]/.test(n) ||
+        [...n].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127)
+      ),
+    "invalid filename",
+  );
 
 const IMAGES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 const ASSETS = [...IMAGES, "application/pdf", "application/zip"];
@@ -191,34 +207,78 @@ export const mountAdminRoutes = (app: Hono<AppEnv>, d: AppDeps): void => {
   );
 
   /** Raw body upload: size is capped while streaming (see `bodyLimit`), type is sniffed from the bytes. */
-  const upload =
-    (prefix: string, types: string[], maxBytes: number) =>
-    async (c: Context<AppEnv>) => {
-      const declared = c.req.header("content-type")?.split(";")[0]?.trim();
-      const body = new Uint8Array(await c.req.arrayBuffer());
-      const { contentType, ext } = validateUpload(body, {
-        maxBytes,
-        allowedTypes: types,
-        declaredType: declared,
-      });
-      const key = newStorageKey(prefix, ext);
-      await d.storage.put(key, body, contentType);
-      change(c, `${prefix}/${key}`);
-      return c.json({ key, contentType, size: body.byteLength }, 201);
-    };
-  const remove = (prefix: string) => async (c: Context<AppEnv>) => {
-    const key = c.req.query("key") ?? "";
-    if (!isSafeKey(key) || !key.startsWith(`${prefix}/`))
-      throw new HttpError("validation_failed", "Invalid key");
-    await d.storage.delete(key);
-    change(c, `${prefix}/${key}`);
-    return c.json({ ok: true });
+  const readUpload = async (
+    c: Context<AppEnv>,
+    prefix: string,
+    types: string[],
+    maxBytes: number,
+  ) => {
+    const declared = c.req.header("content-type")?.split(";")[0]?.trim();
+    const body = new Uint8Array(await c.req.arrayBuffer());
+    const { contentType, ext } = validateUpload(body, {
+      maxBytes,
+      allowedTypes: types,
+      declaredType: declared,
+    });
+    const key = newStorageKey(prefix, ext);
+    await d.storage.put(key, body, contentType);
+    return { key, contentType, size: body.byteLength };
   };
   const limits = d.uploadLimits ?? { media: 5_000_000, asset: 50_000_000 };
-  admin.post("/media", upload("media", IMAGES, limits.media));
-  admin.delete("/media", remove("media"));
-  admin.post("/digital-assets", upload("assets", ASSETS, limits.asset));
-  admin.delete("/digital-assets", remove("assets"));
+  admin.post("/media", async (c) => {
+    const file = await readUpload(c, "media", IMAGES, limits.media);
+    change(c, `media/${file.key}`);
+    return c.json(file, 201);
+  });
+  admin.delete("/media", async (c) => {
+    const key = c.req.query("key") ?? "";
+    if (!isSafeKey(key) || !key.startsWith("media/"))
+      throw new HttpError("validation_failed", "Invalid key");
+    await d.storage.delete(key);
+    change(c, `media/${key}`);
+    return c.json({ ok: true });
+  });
+
+  // Digital assets: the file is private and never returned; customers get it only through a download grant.
+  // Replacing swaps the file under the same id, so grants already sold keep working.
+  const assetView = ({ storageKey: _key, ...asset }: DigitalAsset) => asset;
+  const assetUpload = async (c: Context<AppEnv>) => {
+    const { filename } = parse(
+      z.strictObject({ filename: AssetName }),
+      c.req.query(),
+    );
+    const file = await readUpload(c, "assets", ASSETS, limits.asset);
+    return {
+      filename,
+      storageKey: file.key,
+      contentType: file.contentType,
+      size: file.size,
+    };
+  };
+  admin.get("/digital-assets", async (c) => {
+    const page = await d.db.assets.list(parse(PageQuery, c.req.query()));
+    return c.json({ ...page, items: page.items.map(assetView) });
+  });
+  admin.get("/digital-assets/:id", async (c) => {
+    const found = await d.db.assets.get(c.req.param("id"));
+    if (!found) throw new HttpError("not_found", "Asset not found");
+    return c.json(assetView(found));
+  });
+  admin.post("/digital-assets", async (c) => {
+    const asset = await d.downloads.createAsset(await assetUpload(c));
+    change(c, `digital-assets/${asset.id}`);
+    return c.json(assetView(asset), 201);
+  });
+  admin.put("/digital-assets/:id", async (c) => {
+    const file = await assetUpload(c);
+    const asset = await d.downloads.replaceAsset(c.req.param("id"), file);
+    if (!asset) {
+      await d.storage.delete(file.storageKey); // nothing to replace: do not keep the orphan upload
+      throw new HttpError("not_found", "Asset not found");
+    }
+    change(c, `digital-assets/${asset.id}`);
+    return c.json(assetView(asset));
+  });
 
   // Keys: the secret appears only in the create/rotate response, which idempotency never stores. The key
   // store is separate from `db`, so the audit entry is appended here and `undo` compensates if it fails:

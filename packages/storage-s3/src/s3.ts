@@ -78,7 +78,7 @@ export function createS3Storage(opts: S3StorageOptions): StorageProvider {
       const res = await call(urlOf(key), { method: "DELETE" });
       if (!res.ok && res.status !== 404) fail(res);
     },
-    async signedUrl(key, expiresInSeconds) {
+    async signedUrl(key, expiresInSeconds, opts) {
       const url = urlOf(key);
       if (
         !Number.isInteger(expiresInSeconds) ||
@@ -89,13 +89,16 @@ export function createS3Storage(opts: S3StorageOptions): StorageProvider {
       const head = await call(url, { method: "HEAD" });
       if (head.status === 404) throw new ProviderError(NAME, "not_found", key);
       if (!head.ok) fail(head);
-      const signed = await client.sign(
-        `${url}?X-Amz-Expires=${expiresInSeconds}`,
-        {
-          method: "GET",
-          aws: { signQuery: true },
-        },
-      );
+      const query = new URLSearchParams({
+        "X-Amz-Expires": String(expiresInSeconds),
+        ...(opts?.filename && {
+          "response-content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(opts.filename).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16)}`)}`,
+        }),
+      });
+      const signed = await client.sign(`${url}?${query}`, {
+        method: "GET",
+        aws: { signQuery: true },
+      });
       return signed.url;
     },
   };

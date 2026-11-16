@@ -4,6 +4,8 @@ import {
   type Database,
   type DiscountRepository,
   type DomainEvent,
+  type DownloadGrantRepository,
+  decideConsume,
   decideReserveRetry,
   decideSettle,
   type Entity,
@@ -15,6 +17,7 @@ import {
 } from "@free-commerce/core";
 import type {
   DiscountCode,
+  DownloadGrant,
   Reservation,
   StockLevel,
 } from "@free-commerce/schema";
@@ -22,7 +25,7 @@ import type {
 type State = {
   [K in Exclude<
     keyof Repositories,
-    "inventory" | "outbox" | "discounts" | "audit"
+    "inventory" | "outbox" | "discounts" | "audit" | "grants"
   >]: Repositories[K] extends Repository<infer T> ? Map<string, T> : never;
 } & {
   stock: Map<string, StockLevel>;
@@ -31,6 +34,7 @@ type State = {
   redemptions: Map<string, { codeId: string; customerKey?: string }>;
   outbox: Map<string, { event: DomainEvent; delivered: boolean }>;
   audit: Map<string, AuditEntry>;
+  grants: Map<string, DownloadGrant>;
 };
 
 const emptyState = (): State => ({
@@ -44,6 +48,8 @@ const emptyState = (): State => ({
   redemptions: new Map(),
   outbox: new Map(),
   audit: new Map(),
+  grants: new Map(),
+  assets: new Map(),
 });
 
 const repository = <T extends Entity>(
@@ -166,6 +172,21 @@ const discounts = (state: () => State): DiscountRepository => {
   };
 };
 
+const grants = (state: () => State): DownloadGrantRepository => ({
+  ...repository(() => state().grants),
+  async find(by, value) {
+    return [...state().grants.values()]
+      .filter((g) => g[by] === value)
+      .map((g) => structuredClone(g));
+  },
+  // Synchronous after entry, so atomic on the JS event loop.
+  async consume(id, now) {
+    const out = decideConsume(state().grants.get(id), now);
+    if (out.ok) state().grants.set(id, out.grant);
+    return out.ok ? { ok: true, grant: structuredClone(out.grant) } : out;
+  },
+});
+
 const audit = (rows: () => State["audit"]): AuditRepository => ({
   async append(entry) {
     if (!rows().has(entry.id)) rows().set(entry.id, structuredClone(entry));
@@ -211,6 +232,8 @@ const bind = (state: () => State): Repositories => ({
   orders: repository(() => state().orders),
   roles: repository(() => state().roles),
   audit: audit(() => state().audit),
+  assets: repository(() => state().assets),
+  grants: grants(state),
   outbox: outbox(() => state().outbox),
 });
 
@@ -231,6 +254,8 @@ export function createMemoryDatabase(): Database {
           orders: new Map(state.orders),
           roles: new Map(state.roles),
           audit: new Map(state.audit),
+          assets: new Map(state.assets),
+          grants: new Map(state.grants),
           stock: new Map(state.stock),
           reservations: new Map(state.reservations),
           discounts: new Map(state.discounts),

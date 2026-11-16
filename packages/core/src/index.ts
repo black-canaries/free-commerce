@@ -57,6 +57,16 @@ export {
   usageRefusal,
 } from "./discounts/discounts";
 export {
+  createDownloads,
+  type DownloadAccess,
+  type DownloadDeps,
+  DownloadError,
+  type DownloadSettings,
+  type Downloads,
+  type DownloadView,
+  decideConsume,
+} from "./downloads/downloads";
+export {
   createEventBus,
   type DomainEvent,
   type EventBus,
@@ -137,8 +147,10 @@ export {
 export { isSafeKey, newStorageKey, validateUpload } from "./providers/upload";
 export type {
   CartRepository,
+  ConsumeResult,
   Database,
   DiscountRepository,
+  DownloadGrantRepository,
   Entity,
   InventoryRepository,
   OrderRepository,
