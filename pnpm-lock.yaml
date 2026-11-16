@@ -73,6 +73,9 @@ importers:
       '@free-commerce/core':
         specifier: workspace:*
         version: link:../core
+      '@free-commerce/schema':
+        specifier: workspace:*
+        version: link:../schema
       fast-check:
         specifier: ^4.10.2
         version: 4.10.2
