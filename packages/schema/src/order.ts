@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { DeliveryType } from "./catalog.js";
+import { DeliveryType, VariantId } from "./catalog.js";
 import { idSchema } from "./id.js";
 import { Money } from "./money.js";
 import { Timestamp } from "./time.js";
@@ -32,14 +32,21 @@ const count = z.number().int().nonnegative();
 export const OrderLine = z
   .object({
     id: idSchema("line"),
+    /** Needed to restock; absent on lines created before refunds existed. */
+    variantId: VariantId.optional(),
     title: z.string().min(1),
     deliveryType: DeliveryType,
     quantity: count.min(1),
     fulfilled: count,
+    /** Units returned to stock by refunds or cancellation; never above `quantity`. */
+    restocked: count.optional(),
     unitPrice: Money,
   })
   .refine((l) => l.fulfilled <= l.quantity, {
     message: "fulfilled exceeds quantity",
+  })
+  .refine((l) => (l.restocked ?? 0) <= l.quantity, {
+    message: "restocked exceeds quantity",
   });
 export type OrderLine = z.infer<typeof OrderLine>;
 
@@ -60,6 +67,8 @@ export const Order = z
     refunded: Money,
     /** Provider payment that funded the order; refunds go through it. */
     paymentId: z.string().min(1).optional(),
+    /** Idempotency keys of the admin refunds already applied (replays are no-ops). */
+    refunds: z.array(z.string()).optional(),
     /** What the customer agreed to at checkout. Immediate delivery is recorded only when digital lines were bought. */
     consents: z
       .strictObject({

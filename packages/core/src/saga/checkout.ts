@@ -188,6 +188,7 @@ function buildOrder(
       fulfilmentStatus: "unfulfilled",
       lines: reserved.lines.map((l) => ({
         id: l.id,
+        variantId: l.variantId,
         title: l.title,
         deliveryType: l.deliveryType,
         quantity: l.quantity,
