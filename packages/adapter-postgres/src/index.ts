@@ -17,6 +17,7 @@ import {
   usageRefusal,
 } from "@free-commerce/core";
 import {
+  type CustomerAddress,
   type DiscountCode,
   type Reservation,
   toTimestamp,
@@ -39,6 +40,8 @@ const tables = {
   carts: docTable("carts"),
   orders: docTable("orders"),
   roles: docTable("roles"),
+  customers: docTable("customers"),
+  addresses: docTable("addresses"),
 } satisfies Record<
   Exclude<keyof Repositories, "inventory" | "outbox" | "discounts" | "audit">,
   unknown
@@ -117,6 +120,20 @@ const repository = <T extends Entity>(
     };
   },
 });
+
+/** Owner lookups use the `customerId` expression indexes of the orders and addresses tables. */
+const ownedBy = async <T>(
+  db: Db,
+  table: typeof tables.orders | typeof tables.addresses,
+  customerId: string,
+) =>
+  (
+    await db
+      .select({ doc: table.doc })
+      .from(table)
+      .where(sql`${table.doc}->>'customerId' = ${customerId}`)
+      .orderBy(asc(table.id))
+  ).map((r) => r.doc as T);
 
 const toReservation = (r: typeof reservations.$inferSelect): Reservation => ({
   ...r,
@@ -363,7 +380,20 @@ const bind = (db: Db): Repositories => ({
   discounts: discounts(db),
   products: repository(db, tables.products),
   carts: repository(db, tables.carts),
-  orders: repository(db, tables.orders),
+  customers: repository(db, tables.customers),
+  addresses: {
+    ...repository<CustomerAddress>(db, tables.addresses),
+    listByCustomer: (id) => ownedBy(db, tables.addresses, id),
+    async deleteByCustomer(id) {
+      await db
+        .delete(tables.addresses)
+        .where(sql`${tables.addresses.doc}->>'customerId' = ${id}`);
+    },
+  },
+  orders: {
+    ...repository(db, tables.orders),
+    listByCustomer: (id) => ownedBy(db, tables.orders, id),
+  },
   roles: repository(db, tables.roles),
   audit: audit(db),
   outbox: outbox(db),

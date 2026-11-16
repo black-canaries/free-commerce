@@ -132,6 +132,7 @@ function world(
   const input = {
     cartId: cart.id,
     cartUpdatedAt: cart.updatedAt,
+    customerId: `cus_${"0".repeat(26)}`,
     consents: {
       termsAcceptedAt: new Date(START).toISOString(),
       immediateDeliveryAcceptedAt: new Date(START).toISOString(),
@@ -282,6 +283,7 @@ describe("completeCheckout", () => {
     const [order] = await w.orders();
     expect(run.status).toBe("completed");
     expect(order?.paymentId).toBe(w.paymentId());
+    expect(order?.customerId).toBe(`cus_${"0".repeat(26)}`);
     expect(order?.consents?.immediateDeliveryAcceptedAt).toBeDefined();
     expect(order?.lines.map((l) => l.fulfilled)).toEqual([0, 1]);
     expect(order?.status).toBe("open");

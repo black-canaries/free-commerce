@@ -1,4 +1,6 @@
 import type {
+  Customer,
+  CustomerAddress,
   DiscountCode,
   PageQuery,
   Product,
@@ -29,7 +31,18 @@ export type ProductRepository = Repository<Product>;
 /** @experimental */
 export type CartRepository<T extends Entity = Entity> = Repository<T>;
 /** @experimental */
-export type OrderRepository<T extends Entity = Entity> = Repository<T>;
+export interface OrderRepository<T extends Entity = Entity>
+  extends Repository<T> {
+  /** Orders whose `customerId` is `customerId`. */
+  listByCustomer(customerId: string): Promise<T[]>;
+}
+
+/** @experimental Saved addresses; `customerId` is the owner. */
+export interface AddressRepository extends Repository<CustomerAddress> {
+  listByCustomer(customerId: string): Promise<CustomerAddress[]>;
+  /** Idempotent. */
+  deleteByCustomer(customerId: string): Promise<void>;
+}
 
 /** @experimental `ok: false` reasons: unknown id, commit after expiry, or a final state that disagrees. */
 export type SettleResult =
@@ -108,6 +121,8 @@ export interface Repositories {
   discounts: DiscountRepository;
   inventory: InventoryRepository;
   products: ProductRepository;
+  customers: Repository<Customer>;
+  addresses: AddressRepository;
   carts: CartRepository;
   orders: OrderRepository;
   /** Written in the same transaction as the domain change. */

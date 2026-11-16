@@ -1,4 +1,5 @@
 import {
+  type AddressRepository,
   type AuditEntry,
   type AuditRepository,
   type Database,
@@ -8,12 +9,14 @@ import {
   decideSettle,
   type Entity,
   type InventoryRepository,
+  type OrderRepository,
   type Outbox,
   type Repositories,
   type Repository,
   usageRefusal,
 } from "@free-commerce/core";
 import type {
+  CustomerAddress,
   DiscountCode,
   Reservation,
   StockLevel,
@@ -22,9 +25,11 @@ import type {
 type State = {
   [K in Exclude<
     keyof Repositories,
-    "inventory" | "outbox" | "discounts" | "audit"
+    "inventory" | "outbox" | "discounts" | "audit" | "orders" | "addresses"
   >]: Repositories[K] extends Repository<infer T> ? Map<string, T> : never;
 } & {
+  orders: Map<string, Entity>;
+  addresses: Map<string, CustomerAddress>;
   stock: Map<string, StockLevel>;
   reservations: Map<string, Reservation>;
   discounts: Map<string, DiscountCode>;
@@ -35,6 +40,8 @@ type State = {
 
 const emptyState = (): State => ({
   products: new Map(),
+  customers: new Map(),
+  addresses: new Map(),
   carts: new Map(),
   orders: new Map(),
   roles: new Map(),
@@ -65,6 +72,29 @@ const repository = <T extends Entity>(
       items: page.map((id) => structuredClone(rows().get(id) as T)),
       nextCursor: ids.length > limit ? (page.at(-1) ?? null) : null,
     };
+  },
+});
+
+const ownedBy = <T extends Entity>(rows: Map<string, T>, customerId: string) =>
+  [...rows.values()]
+    .filter((r) => (r as { customerId?: string }).customerId === customerId)
+    .map((r) => structuredClone(r));
+
+const orders = (rows: () => State["orders"]): OrderRepository => ({
+  ...repository(rows),
+  async listByCustomer(customerId) {
+    return ownedBy(rows(), customerId);
+  },
+});
+
+const addresses = (rows: () => State["addresses"]): AddressRepository => ({
+  ...repository(rows),
+  async listByCustomer(customerId) {
+    return ownedBy(rows(), customerId);
+  },
+  async deleteByCustomer(customerId) {
+    for (const [id, a] of rows())
+      if (a.customerId === customerId) rows().delete(id);
   },
 });
 
@@ -208,7 +238,9 @@ const bind = (state: () => State): Repositories => ({
   discounts: discounts(state),
   products: repository(() => state().products),
   carts: repository(() => state().carts),
-  orders: repository(() => state().orders),
+  customers: repository(() => state().customers),
+  addresses: addresses(() => state().addresses),
+  orders: orders(() => state().orders),
   roles: repository(() => state().roles),
   audit: audit(() => state().audit),
   outbox: outbox(() => state().outbox),
@@ -227,6 +259,8 @@ export function createMemoryDatabase(): Database {
       const run = queue.then(async () => {
         const copy: State = {
           products: new Map(state.products),
+          customers: new Map(state.customers),
+          addresses: new Map(state.addresses),
           carts: new Map(state.carts),
           orders: new Map(state.orders),
           roles: new Map(state.roles),

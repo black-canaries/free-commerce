@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AddressId } from "./address.js";
+import { Address, AddressId } from "./address.js";
 import { idSchema } from "./id.js";
 import { Timestamp } from "./time.js";
 
@@ -34,6 +34,10 @@ export const Customer = z
     path: ["email"],
   });
 export type Customer = z.infer<typeof Customer>;
+
+/** A saved address; deleted (not nulled) when its customer is anonymised. */
+export const CustomerAddress = Address.extend({ customerId: CustomerId });
+export type CustomerAddress = z.infer<typeof CustomerAddress>;
 
 export const CUSTOMER_PII_FIELDS = [
   "email",
