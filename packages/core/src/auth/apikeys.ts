@@ -1,4 +1,5 @@
-import { newId } from "@free-commerce/schema";
+import { newId, type PageQuery } from "@free-commerce/schema";
+import type { Page } from "../repositories";
 
 /** `read`/`cart` are storefront scopes; `admin:*` open `/admin` routes and only secret keys may hold them. */
 export const API_SCOPES = [
@@ -25,11 +26,15 @@ export interface ApiKey {
   revokedAt: string | null;
 }
 
-/** @experimental Persistence for keys; Postgres implementation follows with the DB adapters (ADR 0019). */
+/**
+ * @experimental Persistence for keys. `hash` is unique: `save` of a different id with an existing hash must
+ * reject. `list` is ordered by id ascending, same paging as `Repository.list`.
+ */
 export interface ApiKeyStore {
   get(id: string): Promise<ApiKey | null>;
   getByHash(hash: string): Promise<ApiKey | null>;
   save(key: ApiKey): Promise<void>;
+  list(query: PageQuery): Promise<Page<ApiKey>>;
 }
 
 export class ApiKeyError extends Error {

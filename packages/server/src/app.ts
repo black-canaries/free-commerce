@@ -7,24 +7,28 @@ import {
   type Repository,
   ROLES,
   type RoleAssignment,
+  type SearchProvider,
+  type StorageProvider,
 } from "@free-commerce/core";
 import { type Order, PageQuery } from "@free-commerce/schema";
 import { Hono, type MiddlewareHandler } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { z } from "zod";
 import { actorOf, audited, authorize } from "./access.js";
+import { mountAdminRoutes } from "./admin.js";
 import {
   type AuthDeps,
   authenticate,
   isAuthRoute,
   mountAuthRoutes,
   requireAdmin,
-  requireCustomer,
   requireStoreKey,
 } from "./auth.js";
-import { errorBody, HttpError, parse } from "./errors.js";
+import { errorBody, fromDomain, HttpError, parse } from "./errors.js";
 import { consoleLogger, noopTracer } from "./fakes.js";
 import { idempotency, rateLimit, requestContext } from "./middleware.js";
+import { mountStoreRoutes } from "./store.js";
 import type {
   AppEnv,
   IdempotencyStore,
@@ -40,8 +44,19 @@ export interface AppDeps {
   rateLimit: RateLimitStore;
   auth: AuthProvider;
   apiKeys: ApiKeyStore;
-  /** Admin roles and the audit log; `transaction` keeps role changes atomic. */
-  db: Pick<Database, "roles" | "audit" | "transaction">;
+  db: Database;
+  search: SearchProvider;
+  /** Private object storage for media and digital assets (every read is a signed URL). */
+  storage: StorageProvider;
+  /**
+   * Serves `GET /files/*`: resolves the object a signed URL grants, or null (e.g. `LocalStorage.getSigned`).
+   * Leave unset when storage hands out its own URLs (S3/R2).
+   */
+  serveSigned?: (
+    url: string,
+  ) => Promise<{ body: Uint8Array; contentType: string } | null>;
+  /** Max bytes per upload, enforced while streaming. Defaults: media 5 MB, digital assets 50 MB. */
+  uploadLimits?: { media: number; asset: number };
   /** Orders belonging to a customer (their `cus_` id); this is what keeps customers to their own orders. */
   customerOrders: (customerId: string) => Promise<Order[]>;
   /** Browser origins of storefronts and the admin app (CORS, and CSRF check for cookie-authenticated admin writes). */
@@ -131,6 +146,28 @@ export const createApp = (deps: AppDeps) => {
     now,
     "auth",
   );
+  // Streaming cap, before anything buffers the body (the idempotency fingerprint reads it whole).
+  const uploads = deps.uploadLimits ?? { media: 5_000_000, asset: 50_000_000 };
+  const sizeLimit: MiddlewareHandler<AppEnv> = (c, next) => {
+    const maxSize = /^\/admin\/media\/?$/.test(c.req.path)
+      ? uploads.media
+      : /^\/admin\/digital-assets\/?$/.test(c.req.path)
+        ? uploads.asset
+        : 1_000_000;
+    return bodyLimit({
+      maxSize,
+      onError: (c) =>
+        c.json(
+          errorBody(
+            "validation_failed",
+            "Request body too large",
+            c.var.requestId,
+            { maxBytes: maxSize },
+          ),
+          413,
+        ),
+    })(c, next);
+  };
   const idem = idempotency(deps.idempotency);
   // Login, register and logout are exempt from idempotency: replaying them would store a session token.
   const unlessAuthRoute: MiddlewareHandler<AppEnv> = (c, next) =>
@@ -140,6 +177,7 @@ export const createApp = (deps: AppDeps) => {
   app.use(
     "/store/*",
     limits,
+    sizeLimit,
     authenticate(authDeps, "customer"),
     requireStoreKey,
     unlessAuthRoute,
@@ -147,6 +185,7 @@ export const createApp = (deps: AppDeps) => {
   app.use(
     "/admin/*",
     limits,
+    sizeLimit,
     authenticate(authDeps, "admin"),
     requireAdmin(authDeps),
     authorize(accessDeps),
@@ -180,15 +219,26 @@ export const createApp = (deps: AppDeps) => {
     return c.json(body);
   });
 
-  store.get("/orders", requireCustomer, async (c) =>
-    c.json(await deps.customerOrders(c.var.auth.customer?.userId ?? "")),
-  );
-  store.get("/orders/:id", requireCustomer, async (c) => {
-    const orders = await deps.customerOrders(c.var.auth.customer?.userId ?? "");
-    const order = orders.find((o) => o.id === c.req.param("id"));
-    if (!order) throw new HttpError("not_found", "Order not found");
-    return c.json(order);
-  });
+  mountStoreRoutes(app, deps);
+  mountAdminRoutes(app, deps);
+
+  // Signed private files: the signature is the credential. Never inline, never sniffed.
+  if (deps.serveSigned) {
+    const serve = deps.serveSigned;
+    app.get("/files/*", limits, async (c) => {
+      const file = await serve(c.req.url);
+      if (!file) throw new HttpError("not_found", "File not found");
+      return new Response(file.body as Uint8Array<ArrayBuffer>, {
+        headers: {
+          "content-type": file.contentType,
+          "x-content-type-options": "nosniff",
+          "content-disposition": "attachment",
+          "content-security-policy": "default-src 'none'; sandbox",
+          "cache-control": "private, no-store",
+        },
+      });
+    });
+  }
 
   const admin = app.basePath("/admin");
   admin.get("/ping", (c) => c.json(parse(PageQuery, c.req.query())));
@@ -244,8 +294,9 @@ export const createApp = (deps: AppDeps) => {
     const { requestId } = c.var;
     return c.json(errorBody("not_found", "Route not found", requestId), 404);
   });
-  app.onError((err, c) => {
+  app.onError((raw, c) => {
     const { requestId } = c.var;
+    const err = fromDomain(raw) ?? raw;
     if (err instanceof HttpError) {
       const { details, headers } = err.opts;
       return c.json(

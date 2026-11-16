@@ -11,7 +11,7 @@ Task 1.10 (🔒).
 - Secret = 256 random bits (`crypto.getRandomValues`), shown once by `createApiKey`; only its SHA-256 is stored (`hash`) plus a 7-character `hint`. A fast hash is correct here because the input is high-entropy; password-style stretching adds nothing. Lookup is by hash, so there is no comparison to time.
 - Verification happens on every request (`verifyApiKey`), so revocation is immediate. `rotateApiKey` issues a same-scope replacement and retires the old key after an optional grace period.
 - Sent as `x-api-key`. `/store/*` requires a key whose scope covers the method (`read` for GET, `cart` for writes); `/admin/*` needs an admin session or a secret key with `admin:read`/`admin:write`.
-- `ApiKeyStore` (get, getByHash, save) has an in-memory fake only. **The Postgres implementation, and management routes (create, list, rotate, revoke), are not in this task**: adding it to `Repositories` would change the repository interfaces after the testkit exists (stop-and-ask rule), so it is a follow-up with the DB adapters; until then production needs a store adapter.
+- `ApiKeyStore` (get, getByHash, save) has an in-memory fake only. **The Postgres implementation, and management routes (create, list, rotate, revoke), are not in this task (delivered in 1.14, ADR 0027)**: adding it to `Repositories` would change the repository interfaces after the testkit exists (stop-and-ask rule), so it is a follow-up with the DB adapters; until then production needs a store adapter.
 
 ## Idempotency fixes (closes the ADR 0011 caveats)
 

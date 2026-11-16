@@ -2,9 +2,10 @@ import {
   outboxConformance,
   repositoryConformance,
 } from "@free-commerce/adapter-testkit";
+import { apiKeyStoreConformance } from "@free-commerce/core/testing";
 import postgres from "postgres";
 import { afterAll, describe, it } from "vitest";
-import { createPostgresDatabase } from "./index";
+import { createPostgresApiKeyStore, createPostgresDatabase } from "./index";
 import { migrate } from "./migrate";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -20,9 +21,13 @@ if (!url) {
   afterAll(() => client.end());
   const make = async () => {
     await migrate(client);
-    await client`truncate products, carts, orders, stock, reservations, outbox, discounts, redemptions, roles, audit`;
+    await client`truncate products, carts, orders, stock, reservations, outbox, discounts, redemptions, roles, audit, api_keys`;
     return createPostgresDatabase(client);
   };
   repositoryConformance("postgres", make);
   outboxConformance("postgres", make);
+  apiKeyStoreConformance("postgres", async () => {
+    await make();
+    return createPostgresApiKeyStore(client);
+  });
 }

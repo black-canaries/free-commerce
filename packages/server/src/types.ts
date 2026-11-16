@@ -60,6 +60,8 @@ export type AppEnv = {
     requestId: string;
     log: Logger;
     auth: AuthState;
+    /** The response carries a secret: idempotency must not store it (a replay answers `conflict`). */
+    sensitive?: boolean;
     /** Set by handlers via `recordChange`, read by the audit middleware. */
     /** Set when the handler already wrote its audit entry in its own transaction. */
     audited?: boolean;

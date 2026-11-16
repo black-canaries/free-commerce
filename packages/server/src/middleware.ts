@@ -157,6 +157,15 @@ export const idempotency =
       throw err;
     }
     if (c.res.status >= 500) return store.release(key);
+    if (c.var.sensitive)
+      return store.complete(key, {
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({
+          code: "conflict",
+          message: "This request already succeeded; its secret is shown once",
+        }),
+      });
     await store.complete(key, {
       status: c.res.status,
       contentType: c.res.headers.get("content-type") ?? "application/json",
