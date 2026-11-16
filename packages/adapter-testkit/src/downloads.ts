@@ -134,6 +134,7 @@ export function downloadCases(make: () => Database | Promise<Database>): void {
         orderId: w.mine.id,
         filename: "book.pdf",
         size: 3,
+        status: "active",
         expiresAt: new Date(T0 + DAY).toISOString(),
         downloadsLeft: 2,
       });
@@ -243,6 +244,78 @@ export function downloadCases(make: () => Database | Promise<Database>): void {
       expect(
         await code(w.downloads.url({ orderIds: [w.other.id] }, theirs)),
       ).toBe("ok");
+    });
+
+    it("a cancelled order revokes even when nothing was refunded", async () => {
+      const w = await world(make);
+      const free = Order.parse({
+        ...w.mine,
+        paid: { amount: 0, currency: "USD" },
+        total: { amount: 0, currency: "USD" },
+      });
+      await w.db.orders.save(free);
+      const refunds = createRefunds({
+        db: w.db,
+        payments: createFakePayments(),
+        variantOf: async () => null,
+        revokeDownloads: w.downloads.revoke,
+        now: () => new Date(T0),
+      });
+      await refunds.refund({
+        orderId: free.id,
+        key: "c",
+        cancel: true,
+        actor: { type: "user", id: "usr_1" },
+      });
+      expect((await w.downloads.list(w.own))[0]?.status).toBe("revoked");
+    });
+
+    it("the repository applies every consume rule itself (revoked, expired, exhausted, unknown)", async () => {
+      const w = await world(make);
+      const at = (ms: number) => new Date(T0 + ms).toISOString();
+      const put = (over: object) => w.db.grants.save({ ...w.grant, ...over });
+      await put({ maxDownloads: 1 });
+      expect(await w.db.grants.consume(w.grant.id, at(0))).toMatchObject({
+        ok: true,
+      });
+      expect(await w.db.grants.consume(w.grant.id, at(0))).toEqual({
+        ok: false,
+        reason: "exhausted",
+      });
+      await put({ downloads: 0, maxDownloads: null, expiresAt: at(10) });
+      expect(await w.db.grants.consume(w.grant.id, at(10))).toEqual({
+        ok: false,
+        reason: "expired",
+      });
+      expect(await w.db.grants.consume(w.grant.id, at(9))).toMatchObject({
+        ok: true,
+      });
+      await put({ downloads: 0, expiresAt: null, revokedAt: at(0) });
+      expect(await w.db.grants.consume(w.grant.id, at(0))).toEqual({
+        ok: false,
+        reason: "revoked",
+      });
+      expect(await w.db.grants.consume(newId("grant"), at(0))).toEqual({
+        ok: false,
+        reason: "not_found",
+      });
+      expect((await w.db.grants.get(w.grant.id))?.downloads).toBe(0);
+    });
+
+    it("a variant pointing at a missing asset gets no grant", async () => {
+      const w = await world(make);
+      const o = Order.parse({
+        ...w.mine,
+        id: newId("ord"),
+        lines: w.mine.lines.map((l) => ({ ...l, id: newId("line") })),
+      });
+      await w.db.transaction((tx) =>
+        w.downloads.grant(
+          { ...tx, assets: { ...tx.assets, get: async () => null } },
+          o,
+        ),
+      );
+      expect(await w.db.grants.find("orderId", o.id)).toEqual([]);
     });
 
     it("shows another customer's grants as not found, same as unknown ones", async () => {

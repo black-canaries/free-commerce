@@ -298,15 +298,19 @@ const discounts = (db: Db): DiscountRepository => {
 const grants = (db: Db): DownloadGrantRepository => {
   const base = repository<DownloadGrant>(db, grantsTable);
   const consume: DownloadGrantRepository["consume"] = async (id, now) => {
-    const rows = (await db.execute(sql`
-      update grants set doc = jsonb_set(doc, '{downloads}', to_jsonb((doc->>'downloads')::int + 1))
-      where id = ${id} and doc->>'revokedAt' is null
-        and (doc->>'expiresAt' is null or (doc->>'expiresAt') collate "C" > ${now})
-        and (doc->>'maxDownloads' is null or (doc->>'downloads')::int < (doc->>'maxDownloads')::int)
-      returning doc`)) as unknown as { doc: DownloadGrant }[];
-    if (rows[0]) return { ok: true, grant: rows[0].doc };
-    const out = decideConsume(await base.get(id), now);
-    return out.ok ? consume(id, now) : out;
+    // A second pass only if the row changed between the UPDATE and the read-back (a race, not a state).
+    for (let pass = 0; pass < 2; pass++) {
+      const rows = (await db.execute(sql`
+        update grants set doc = jsonb_set(doc, '{downloads}', to_jsonb((doc->>'downloads')::int + 1))
+        where id = ${id} and doc->>'revokedAt' is null
+          and (doc->>'expiresAt' is null or (doc->>'expiresAt') collate "C" > ${now})
+          and (doc->>'maxDownloads' is null or (doc->>'downloads')::int < (doc->>'maxDownloads')::int)
+        returning doc`)) as unknown as { doc: DownloadGrant }[];
+      if (rows[0]) return { ok: true, grant: rows[0].doc };
+      const out = decideConsume(await base.get(id), now);
+      if (!out.ok) return out;
+    }
+    return { ok: false, reason: "exhausted" };
   };
   return {
     ...base,

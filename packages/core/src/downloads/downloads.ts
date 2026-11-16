@@ -38,6 +38,8 @@ export interface DownloadView {
   orderId: string;
   filename: string;
   size: number;
+  /** `active` or why the download no longer works. */
+  status: "active" | "revoked" | "expired" | "exhausted";
   expiresAt: string | null;
   downloadsLeft: number | null;
 }
@@ -92,6 +94,11 @@ export function createDownloads(d: DownloadDeps) {
     return lists.flat();
   }
 
+  const statusOf = (g: DownloadGrant) => {
+    const c = decideConsume(g, toTimestamp(now()));
+    return c.ok ? "active" : (c.reason as DownloadView["status"]);
+  };
+
   /** The asset a digital order line delivers, if its variant (still) has one. */
   const assetOf = async (line: Order["lines"][number]) =>
     line.deliveryType === "digital" && line.variantId
@@ -105,7 +112,12 @@ export function createDownloads(d: DownloadDeps) {
       for (const line of order.lines) {
         const assetId = await assetOf(line);
         const id = `grant_${line.id.slice(5)}`;
-        if (!assetId || (await tx.grants.get(id))) continue;
+        if (
+          !assetId ||
+          !(await tx.assets.get(assetId)) ||
+          (await tx.grants.get(id))
+        )
+          continue;
         await tx.grants.save({
           id,
           orderId: order.id,
@@ -160,6 +172,7 @@ export function createDownloads(d: DownloadDeps) {
               orderId: g.orderId,
               filename: asset?.filename ?? "",
               size: asset?.size ?? 0,
+              status: statusOf(g),
               expiresAt: g.expiresAt,
               downloadsLeft:
                 g.maxDownloads === null
