@@ -1,4 +1,5 @@
 import { createMemoryDatabase } from "@free-commerce/adapter-memory";
+import type { Role } from "@free-commerce/core";
 import {
   type ApiScope,
   createApiKey,
@@ -7,6 +8,8 @@ import {
 import {
   createFakeApiKeyStore,
   createFakeAuth,
+  createFakeSearch,
+  createFakeStorage,
 } from "@free-commerce/core/testing";
 import {
   type AppDeps,
@@ -29,6 +32,8 @@ export const setup = async (over: Partial<AppDeps> = {}) => {
     auth,
     apiKeys,
     db,
+    search: createFakeSearch(),
+    storage: createFakeStorage(),
     customerOrders: async () => [],
     allowedOrigins: ["https://shop.example"],
     logger: (e) => logs.push(e),
@@ -81,3 +86,26 @@ export const post = (
       ...headers,
     },
   });
+
+const creds = { password: "correct horse" };
+type T = Awaited<ReturnType<typeof setup>>;
+
+/** A logged-in admin with the given role (`null` = signed up but never assigned one). */
+export const as = async (
+  t: T,
+  role: Role | null,
+  email = `${role}@example.com`,
+) => {
+  await t.auth.signUp("admin", { ...creds, email, name: "Staff Person" });
+  const res = await t.app.request("/admin/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ ...creds, email, mode: "bearer" }),
+    headers: { "content-type": "application/json" },
+  });
+  const { userId, token } = (await res.json()) as {
+    userId: string;
+    token: string;
+  };
+  if (role) await t.db.roles.save({ id: userId, role });
+  return { userId, h: { authorization: `Bearer ${token}` } };
+};

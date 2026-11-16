@@ -1,3 +1,9 @@
+import {
+  ApiKeyError,
+  CartError,
+  CatalogError,
+  ProviderError,
+} from "@free-commerce/core";
 import type { ApiError, ErrorCode } from "@free-commerce/schema";
 import { z } from "zod";
 
@@ -46,3 +52,23 @@ export const errorBody = (
   requestId: string,
   details?: Record<string, unknown>,
 ): ApiError => ({ code, message, requestId, ...(details && { details }) });
+
+/** Domain errors thrown by core services become the matching `HttpError`; anything else is left alone. */
+export const fromDomain = (err: unknown): HttpError | undefined => {
+  if (err instanceof CatalogError)
+    return new HttpError(err.code, err.message, {
+      details: { issues: err.issues },
+    });
+  if (err instanceof CartError)
+    return new HttpError(
+      err.code === "not_found" ? "not_found" : "validation_failed",
+      err.message,
+    );
+  if (err instanceof ApiKeyError)
+    return new HttpError(
+      err.code === "not_found" ? "not_found" : "validation_failed",
+      err.message,
+    );
+  if (err instanceof ProviderError && err.code === "rejected")
+    return new HttpError("validation_failed", err.message);
+};

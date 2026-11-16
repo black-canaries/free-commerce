@@ -1,34 +1,16 @@
 import type { Role } from "@free-commerce/core";
 import { ADMIN_GROUPS, can } from "@free-commerce/core";
 import { describe, expect, it } from "vitest";
-import { post, setup } from "./test-setup.js";
-
-const creds = { password: "correct horse" };
-type T = Awaited<ReturnType<typeof setup>>;
-
-/** A logged-in admin with the given role (`null` = signed up but never assigned one). */
-const as = async (t: T, role: Role | null, email = `${role}@example.com`) => {
-  await t.auth.signUp("admin", { ...creds, email, name: "Staff Person" });
-  const res = await t.app.request("/admin/auth/login", {
-    method: "POST",
-    body: JSON.stringify({ ...creds, email, mode: "bearer" }),
-    headers: { "content-type": "application/json" },
-  });
-  const { userId, token } = (await res.json()) as {
-    userId: string;
-    token: string;
-  };
-  if (role) await t.db.roles.save({ id: userId, role });
-  return { userId, h: { authorization: `Bearer ${token}` } };
-};
+import { as, post, setup } from "./test-setup.js";
 
 // Segments that have a stub handler here; every one of them is in ADMIN_GROUPS.
+type T = Awaited<ReturnType<typeof setup>>;
 const SEGMENTS = Object.keys(ADMIN_GROUPS);
 const stubbed = async () => {
   const t = await setup();
   for (const s of SEGMENTS) {
-    t.app.get(`/admin/${s}/x`, (c) => c.json({ ok: true }));
-    t.app.post(`/admin/${s}/x`, (c) => c.json({ ok: true }));
+    t.app.get(`/admin/${s}/_stub/x`, (c) => c.json({ ok: true }));
+    t.app.post(`/admin/${s}/_stub/x`, (c) => c.json({ ok: true }));
   }
   return t;
 };
@@ -42,6 +24,7 @@ const EXPECT: Record<Role, { read: string[]; write: string[] }> = {
       "products",
       "collections",
       "media",
+      "digital-assets",
       "inventory",
       "orders",
       "customers",
@@ -55,6 +38,7 @@ const EXPECT: Record<Role, { read: string[]; write: string[] }> = {
       "products",
       "collections",
       "media",
+      "digital-assets",
       "inventory",
       "orders",
       "customers",
@@ -67,6 +51,7 @@ const EXPECT: Record<Role, { read: string[]; write: string[] }> = {
       "products",
       "collections",
       "media",
+      "digital-assets",
       "inventory",
       "orders",
       "customers",
@@ -85,12 +70,12 @@ describe("roles x route groups", () => {
       const t = await stubbed();
       const { h } = await as(t, role);
       for (const s of SEGMENTS) {
-        const get = await t.app.request(`/admin/${s}/x`, { headers: h });
+        const get = await t.app.request(`/admin/${s}/_stub/x`, { headers: h });
         expect(get.status === 200, `${role} GET ${s}`).toBe(
           EXPECT[role].read.includes(s),
         );
         const w = await t.app.fetch(
-          post({}, `k-${role}-${s}`, `/admin/${s}/x`, h),
+          post({}, `k-${role}-${s}`, `/admin/${s}/_stub/x`, h),
         );
         expect(w.status === 200, `${role} POST ${s}`).toBe(
           EXPECT[role].write.includes(s),
@@ -104,24 +89,24 @@ describe("roles x route groups", () => {
     const { h } = await as(t, null);
     for (const s of SEGMENTS)
       expect(
-        (await t.app.request(`/admin/${s}/x`, { headers: h })).status,
+        (await t.app.request(`/admin/${s}/_stub/x`, { headers: h })).status,
       ).toBe(403);
   });
 
   it("a route group added without a permission entry fails closed, even for owners", async () => {
     const t = await setup();
-    t.app.get("/admin/brand-new/x", (c) => c.json({ ok: true }));
-    t.app.post("/admin/brand-new/x", (c) => c.json({ ok: true }));
+    t.app.get("/admin/brand-new/_stub/x", (c) => c.json({ ok: true }));
+    t.app.post("/admin/brand-new/_stub/x", (c) => c.json({ ok: true }));
     const { h } = await as(t, "owner");
     expect(
-      (await t.app.request("/admin/brand-new/x", { headers: h })).status,
+      (await t.app.request("/admin/brand-new/_stub/x", { headers: h })).status,
     ).toBe(403);
     expect(
-      (await t.app.fetch(post({}, "k", "/admin/brand-new/x", h))).status,
+      (await t.app.fetch(post({}, "k", "/admin/brand-new/_stub/x", h))).status,
     ).toBe(403);
-    expect(can("owner", "/admin/brand-new/x", "read")).toBe(false);
+    expect(can("owner", "/admin/brand-new/_stub/x", "read")).toBe(false);
     expect(can("owner", "/admin", "read")).toBe(false);
-    expect(can("owner", "/admin/__proto__/x", "read")).toBe(false);
+    expect(can("owner", "/admin/__proto__/_stub/x", "read")).toBe(false);
   });
 
   it("secret keys act as staff (write) or read-only, never owner", async () => {
@@ -134,10 +119,10 @@ describe("roles x route groups", () => {
             : post({}, `k${path}`, path, t.sk),
         )
       ).status;
-    expect(await ok("/admin/products/x")).toBe(200);
-    expect(await ok("/admin/products/x", "POST")).toBe(200);
-    expect(await ok("/admin/api-keys/x")).toBe(403);
-    expect(await ok("/admin/team/x", "POST")).toBe(403);
+    expect(await ok("/admin/products/_stub/x")).toBe(200);
+    expect(await ok("/admin/products/_stub/x", "POST")).toBe(200);
+    expect(await ok("/admin/api-keys/_stub/x")).toBe(403);
+    expect(await ok("/admin/team/_stub/x", "POST")).toBe(403);
     expect(await ok("/admin/audit")).toBe(403);
   });
 });
@@ -303,8 +288,9 @@ describe("audit log", () => {
 
   it("an idempotent replay is not logged twice; key actors are recorded", async () => {
     const t = await setup();
-    t.app.post("/admin/orders/x", (c) => c.json({ ok: true }));
-    const r = () => t.app.fetch(post({}, "same", "/admin/orders/x", t.sk));
+    t.app.post("/admin/orders/_stub/x", (c) => c.json({ ok: true }));
+    const r = () =>
+      t.app.fetch(post({}, "same", "/admin/orders/_stub/x", t.sk));
     await r();
     expect((await r()).headers.get("idempotent-replayed")).toBe("true");
     const { items } = await t.db.audit.list({ limit: 10 });
@@ -314,7 +300,7 @@ describe("audit log", () => {
 
   it("only owners can query it; filter by actor and paginate", async () => {
     const t = await setup();
-    t.app.post("/admin/orders/x", (c) => c.json({ ok: true }));
+    t.app.post("/admin/orders/_stub/x", (c) => c.json({ ok: true }));
     const owner = await as(t, "owner");
     const staff = await as(t, "staff");
     for (const [n, who] of [
@@ -322,7 +308,7 @@ describe("audit log", () => {
       ["b", staff],
       ["c", staff],
     ] as const)
-      await t.app.fetch(post({}, n, "/admin/orders/x", who.h));
+      await t.app.fetch(post({}, n, "/admin/orders/_stub/x", who.h));
     expect(
       (await t.app.request("/admin/audit", { headers: staff.h })).status,
     ).toBe(403);

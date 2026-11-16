@@ -1,4 +1,5 @@
-import { newId } from "@free-commerce/schema";
+import { newId, type PageQuery } from "@free-commerce/schema";
+import type { Page } from "../repositories";
 
 /** `read`/`cart` are storefront scopes; `admin:*` open `/admin` routes and only secret keys may hold them. */
 export const API_SCOPES = [
@@ -25,15 +26,22 @@ export interface ApiKey {
   revokedAt: string | null;
 }
 
-/** @experimental Persistence for keys; Postgres implementation follows with the DB adapters (ADR 0019). */
+/**
+ * @experimental Persistence for keys. `hash` is unique: `save` of a different id with an existing hash must
+ * reject. `list` is ordered by id ascending, same paging as `Repository.list`.
+ */
 export interface ApiKeyStore {
   get(id: string): Promise<ApiKey | null>;
   getByHash(hash: string): Promise<ApiKey | null>;
   save(key: ApiKey): Promise<void>;
+  list(query: PageQuery): Promise<Page<ApiKey>>;
 }
 
 export class ApiKeyError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly code: "not_found" | "invalid" = "invalid",
+  ) {
     super(message);
     this.name = "ApiKeyError";
   }
@@ -105,7 +113,7 @@ export const revokeApiKey = async (
   now: number = Date.now(),
 ): Promise<void> => {
   const key = await store.get(id);
-  if (!key) throw new ApiKeyError("unknown key");
+  if (!key) throw new ApiKeyError("unknown key", "not_found");
   if (!key.revokedAt)
     await store.save({ ...key, revokedAt: new Date(now).toISOString() });
 };
@@ -126,16 +134,22 @@ export const rotateApiKey = async (
     old.revokedAt ||
     (old.expiresAt && Date.parse(old.expiresAt) <= now)
   )
-    throw new ApiKeyError("unknown, revoked or expired key");
+    throw new ApiKeyError("unknown, revoked or expired key", "not_found");
   const next = await createApiKey(
     store,
     { type: old.type, name: old.name, scopes: old.scopes },
     now,
   );
   const until = new Date(now + graceMs).toISOString();
-  await store.save({
-    ...old,
-    expiresAt: old.expiresAt && old.expiresAt < until ? old.expiresAt : until,
-  });
+  try {
+    await store.save({
+      ...old,
+      expiresAt: old.expiresAt && old.expiresAt < until ? old.expiresAt : until,
+    });
+  } catch (err) {
+    // Fail closed: never leave two live keys because the old one could not be retired.
+    await revokeApiKey(store, next.key.id, now);
+    throw err;
+  }
   return next;
 };

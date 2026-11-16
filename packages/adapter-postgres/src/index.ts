@@ -1,4 +1,6 @@
 import {
+  type ApiKey,
+  type ApiKeyStore,
   type AuditEntry,
   type AuditRepository,
   type Database,
@@ -52,6 +54,7 @@ function docTable(name: string) {
 
 const discountTable = docTable("discounts");
 const auditTable = docTable("audit");
+const apiKeysTable = docTable("api_keys");
 const redemptions = pgTable("redemptions", {
   id: text("id").primaryKey(),
   codeId: text("code_id").notNull(),
@@ -308,6 +311,28 @@ const audit = (db: Db): AuditRepository => ({
     };
   },
 });
+
+/**
+ * API keys are JSON documents (ADR 0019). The unique index on `doc->>'hash'` makes a duplicate secret
+ * hash impossible; lookup by hash is that index. Not part of `Database`: keys are not domain data and
+ * need no transaction with it.
+ */
+export const createPostgresApiKeyStore = (client: Sql): ApiKeyStore => {
+  const db = drizzle(client);
+  const { get, save, list } = repository<ApiKey>(db, apiKeysTable);
+  return {
+    get,
+    save,
+    list,
+    async getByHash(hash) {
+      const [row] = await db
+        .select({ doc: apiKeysTable.doc })
+        .from(apiKeysTable)
+        .where(sql`${apiKeysTable.doc}->>'hash' = ${hash}`);
+      return (row?.doc as ApiKey | undefined) ?? null;
+    },
+  };
+};
 
 const outbox = (db: Db): Outbox => ({
   async add(event) {

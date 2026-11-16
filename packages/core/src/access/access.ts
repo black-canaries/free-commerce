@@ -20,6 +20,7 @@ export const ADMIN_GROUPS = {
   products: "catalog",
   collections: "catalog",
   media: "catalog",
+  "digital-assets": "catalog",
   inventory: "catalog",
   orders: "orders",
   customers: "orders",
