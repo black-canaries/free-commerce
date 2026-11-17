@@ -32,6 +32,7 @@ const EXPECT: Record<Role, { read: string[]; write: string[] }> = {
       "shipping",
       "tax",
       "settings",
+      "webhooks",
     ],
     write: [
       "ping",
@@ -59,6 +60,7 @@ const EXPECT: Record<Role, { read: string[]; write: string[] }> = {
       "shipping",
       "tax",
       "settings",
+      "webhooks",
     ],
     write: [],
   },

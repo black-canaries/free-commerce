@@ -32,6 +32,7 @@ export const setup = async (over: Partial<AppDeps> = {}) => {
     auth,
     apiKeys,
     db,
+    webhookKey: btoa(String.fromCharCode(...new Uint8Array(32).fill(7))),
     search: createFakeSearch(),
     storage: createFakeStorage(),
     customerOrders: async () => [],

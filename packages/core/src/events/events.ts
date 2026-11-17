@@ -24,6 +24,7 @@ export interface Outbox {
 
 /** @experimental In-process bus. */
 export interface EventBus {
+  /** `"*"` subscribes to every event type. */
   subscribe(type: string, handler: EventHandler): void;
   /** Runs every matching handler; rejects with the first error after all have run. */
   publish(event: DomainEvent): Promise<void>;
@@ -38,7 +39,9 @@ export function createEventBus(): EventBus {
     },
     async publish(event) {
       const results = await Promise.allSettled(
-        (handlers.get(event.type) ?? []).map((h) => h(event)),
+        [...(handlers.get(event.type) ?? []), ...(handlers.get("*") ?? [])].map(
+          (h) => h(event),
+        ),
       );
       for (const r of results) if (r.status === "rejected") throw r.reason;
     },
