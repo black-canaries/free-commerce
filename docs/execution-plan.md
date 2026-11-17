@@ -119,7 +119,7 @@ Backend only, except the payment client flow in 2.3 (covered by the checkout des
   - **D:** In the Email Templates and Documents canvas, design the invoice, receipt and credit note, including tax lines, tax IDs and localisation.
   - **I:** Sequential, gap-free numbering per document type; invoice generated at payment capture; credit note per refund; rendered as HTML and PDF behind a small renderer interface; link in the order email and customer account; store settings for legal name, address and tax ID.
   *Accept:* Jon approves the design; numbers never skip or repeat under concurrency; a credit note never exceeds its invoice; totals and tax lines match the order exactly.
-- [ ] **2.13 🔒 Outbound webhooks.** Webhook endpoints (URL, event filter), HMAC-signed deliveries driven by the outbox, retries with backoff, a delivery log, manual replay, secret shown once.
+- [x] **2.13 🔒 Outbound webhooks.** Webhook endpoints (URL, event filter), HMAC-signed deliveries driven by the outbox, retries with backoff, a delivery log, manual replay, secret shown once.
   *Accept:* a failing endpoint is retried and eventually disabled with a visible reason; signatures verify with the documented algorithm; replays are idempotent for receivers via an event ID.
 - [ ] **2.14 🔒 Abuse protection.** `CaptchaProvider` interface (Turnstile first) on registration, login and checkout; rate limits and lockouts on login, coupon validation and checkout; limits on failed payment attempts per cart, IP and email (card-testing defence); pass-through of the payment provider's fraud signals.
   *Accept:* automated card-testing and coupon brute-force scripts are blocked in tests; legitimate checkout is unaffected.

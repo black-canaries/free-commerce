@@ -15,6 +15,7 @@ import { downloadCases } from "./downloads";
 import { inventoryCases } from "./inventory";
 import { privacyCases } from "./privacy";
 import { refundCases } from "./refunds";
+import { webhookCases } from "./webhooks";
 
 const product = (id: string, title = "Mug") => ({
   ...createProduct(
@@ -48,6 +49,7 @@ const aggregates = {
     role: v === 1 ? ("staff" as const) : ("owner" as const),
   }),
   discounts: (id: string, v = 1) => ({ id, code: `CODE-${id}`, v }),
+  webhookEndpoints: plain,
 } as const;
 
 /** @experimental Every `Database` adapter must pass this (in-memory and Postgres alike). */
@@ -90,6 +92,7 @@ export function repositoryConformance(
     auditCases(make);
     refundCases(make);
     downloadCases(make);
+    webhookCases(make);
     privacyCases(make);
 
     it("commits transaction writes and returns the result", async () => {

@@ -17,6 +17,9 @@ import {
   type Repositories,
   type Repository,
   usageRefusal,
+  type WebhookDelivery,
+  type WebhookDeliveryRepository,
+  type WebhookEndpoint,
 } from "@free-commerce/core";
 import {
   type CustomerAddress,
@@ -49,7 +52,13 @@ const tables = {
 } satisfies Record<
   Exclude<
     keyof Repositories,
-    "inventory" | "outbox" | "discounts" | "audit" | "grants"
+    | "inventory"
+    | "outbox"
+    | "discounts"
+    | "audit"
+    | "webhookEndpoints"
+    | "webhookDeliveries"
+    | "grants"
   >,
   unknown
 >;
@@ -66,6 +75,8 @@ const discountTable = docTable("discounts");
 const auditTable = docTable("audit");
 const grantsTable = docTable("grants");
 const apiKeysTable = docTable("api_keys");
+const webhookEndpointTable = docTable("webhook_endpoints");
+const webhookDeliveryTable = docTable("webhook_deliveries");
 const redemptions = pgTable("redemptions", {
   id: text("id").primaryKey(),
   codeId: text("code_id").notNull(),
@@ -394,6 +405,49 @@ export const createPostgresApiKeyStore = (client: Sql): ApiKeyStore => {
   };
 };
 
+/** JSON documents; `due` and `listFor` use the partial/expression indexes in the `webhooks` migration. */
+const webhookDeliveries = (db: Db): WebhookDeliveryRepository => {
+  const t = webhookDeliveryTable;
+  return {
+    ...repository<WebhookDelivery>(db, t),
+    async create(delivery) {
+      await db
+        .insert(t)
+        .values({ id: delivery.id, doc: delivery })
+        .onConflictDoNothing({ target: t.id });
+    },
+    async due(now, limit) {
+      const rows = await db
+        .select({ doc: t.doc })
+        .from(t)
+        .where(
+          sql`${t.doc}->>'status' = 'pending' and (${t.doc}->>'nextAttemptAt') collate "C" <= ${now}`,
+        )
+        .orderBy(sql`(${t.doc}->>'nextAttemptAt') collate "C"`, asc(t.id))
+        .limit(limit);
+      return rows.map((r) => r.doc as WebhookDelivery);
+    },
+    async listFor(endpointId, { limit, cursor }) {
+      const rows = await db
+        .select({ doc: t.doc })
+        .from(t)
+        .where(
+          and(
+            sql`${t.doc}->>'endpointId' = ${endpointId}`,
+            cursor === undefined ? undefined : lt(t.id, cursor),
+          ),
+        )
+        .orderBy(desc(t.id))
+        .limit(limit + 1);
+      const items = rows.slice(0, limit).map((r) => r.doc as WebhookDelivery);
+      return {
+        items,
+        nextCursor: rows.length > limit ? (items.at(-1)?.id ?? null) : null,
+      };
+    },
+  };
+};
+
 const outbox = (db: Db): Outbox => ({
   async add(event) {
     await db
@@ -441,6 +495,8 @@ const bind = (db: Db): Repositories => ({
   audit: audit(db),
   assets: repository(db, tables.assets),
   grants: grants(db),
+  webhookEndpoints: repository<WebhookEndpoint>(db, webhookEndpointTable),
+  webhookDeliveries: webhookDeliveries(db),
   outbox: outbox(db),
 });
 

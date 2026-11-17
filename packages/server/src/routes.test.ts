@@ -513,3 +513,129 @@ describe("personal data", () => {
     expect(actions.sort()).toEqual(["privacy.erase", "privacy.export"]);
   });
 });
+
+describe("admin webhooks", () => {
+  const body = {
+    url: "https://hooks.example.com/in",
+    events: ["order.created"],
+  };
+
+  it("creates with the secret shown once, lists without it, and audits without it", async () => {
+    const t = await setup();
+    const { h } = await as(t, "owner");
+    const created = await send(t, "POST", "/admin/webhooks", h, body, "same");
+    expect(created.res.status).toBe(201);
+    const { secret, id } = created.body;
+    expect(secret).toMatch(/^whsec_/);
+    expect(created.body.secretCipher).toBeUndefined();
+    expect(
+      (await send(t, "POST", "/admin/webhooks", h, body, "same")).res.status,
+    ).toBe(409);
+    for (const path of ["/admin/webhooks", `/admin/webhooks/${id}`]) {
+      const got = await send(t, "GET", path, h);
+      expect(got.res.status).toBe(200);
+      expect(JSON.stringify(got.body)).not.toMatch(
+        /whsec_[0-9a-f]{20}|secretCipher/,
+      );
+    }
+    const audit = await t.db.audit.list({ limit: 20 });
+    expect(JSON.stringify(audit)).not.toContain(secret);
+    expect(audit.items.map((e) => e.action)).toContain("POST /admin/webhooks");
+  });
+
+  it("rejects unsafe URLs and bad filters", async () => {
+    const t = await setup();
+    const { h } = await as(t, "owner");
+    for (const bad of [
+      { ...body, url: "http://hooks.example.com/in" },
+      { ...body, url: "https://169.254.169.254/latest" },
+      { ...body, url: "https://localhost/in" },
+      { ...body, events: [] },
+      { ...body, extra: 1 },
+    ])
+      expect(
+        (await send(t, "POST", "/admin/webhooks", h, bad)).res.status,
+      ).toBe(400);
+    const ok = await send(t, "POST", "/admin/webhooks", h, body);
+    const patch = await send(t, "PATCH", `/admin/webhooks/${ok.body.id}`, h, {
+      url: "https://10.0.0.1/x",
+    });
+    expect(patch.res.status).toBe(400);
+  });
+
+  it("is owner-write, staff-read, and 404s on unknown ids", async () => {
+    const t = await setup();
+    const owner = await as(t, "owner");
+    const staff = await as(t, "staff");
+    const made = await send(t, "POST", "/admin/webhooks", owner.h, body);
+    expect((await send(t, "GET", "/admin/webhooks", staff.h)).res.status).toBe(
+      200,
+    );
+    expect(
+      (await send(t, "POST", "/admin/webhooks", staff.h, body)).res.status,
+    ).toBe(403);
+    expect(
+      (
+        await send(t, "PATCH", `/admin/webhooks/${made.body.id}`, staff.h, {
+          enabled: false,
+        })
+      ).res.status,
+    ).toBe(403);
+    expect(
+      (await send(t, "GET", "/admin/webhooks/whk_missing", owner.h)).res.status,
+    ).toBe(404);
+  });
+
+  it("shows the delivery log without payloads and replays a delivery", async () => {
+    const t = await setup();
+    const { h } = await as(t, "owner");
+    const made = await send(t, "POST", "/admin/webhooks", h, body);
+    await t.db.webhookDeliveries.create({
+      id: "whd_evt_1.x",
+      endpointId: made.body.id,
+      event: {
+        id: "evt_1",
+        type: "order.created",
+        occurredAt: "2026-01-01T00:00:00.000Z",
+        payload: { email: "pii@example.com" },
+      },
+      status: "failed",
+      attempts: 6,
+      nextAttemptAt: null,
+      lastStatus: 503,
+      lastError: "HTTP 503",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    const log = await send(
+      t,
+      "GET",
+      `/admin/webhooks/${made.body.id}/deliveries`,
+      h,
+    );
+    expect(log.body.items[0]).toMatchObject({
+      eventId: "evt_1",
+      eventType: "order.created",
+      lastError: "HTTP 503",
+    });
+    expect(JSON.stringify(log.body)).not.toContain("pii@");
+    const replay = `/admin/webhooks/${made.body.id}/deliveries/whd_evt_1.x/replay`;
+    const ok = await send(t, "POST", replay, h, {});
+    expect(ok.res.status).toBe(200);
+    expect(ok.body).toMatchObject({ status: "pending", attempts: 0 });
+    expect(
+      (
+        await send(
+          t,
+          "POST",
+          `/admin/webhooks/whk_other/deliveries/whd_evt_1.x/replay`,
+          h,
+          {},
+        )
+      ).res.status,
+    ).toBe(404);
+    const audit = await t.db.audit.list({ limit: 20 });
+    expect(audit.items.map((e) => e.action)).toContain(
+      "POST /admin/webhooks/:id/deliveries/:deliveryId/replay",
+    );
+  });
+});

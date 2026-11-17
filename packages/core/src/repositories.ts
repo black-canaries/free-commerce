@@ -11,6 +11,10 @@ import type {
 } from "@free-commerce/schema";
 import type { AuditRepository, RoleAssignment } from "./access/access";
 import type { Outbox } from "./events/events";
+import type {
+  WebhookDeliveryRepository,
+  WebhookEndpoint,
+} from "./webhooks/webhooks";
 
 /** @experimental Placeholder entity shape; Phase 1 replaces it with the real Zod-derived types. */
 export type Entity = { id: string };
@@ -145,6 +149,8 @@ export interface Repositories {
   addresses: AddressRepository;
   carts: CartRepository;
   orders: OrderRepository;
+  webhookEndpoints: Repository<WebhookEndpoint>;
+  webhookDeliveries: WebhookDeliveryRepository;
   /** Written in the same transaction as the domain change. */
   outbox: Outbox;
 }

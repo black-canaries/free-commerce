@@ -49,6 +49,10 @@ export interface AppDeps {
   db: Database;
   /** Digital delivery (grants, signed URLs, assets); the checkout and refund services share the same instance. */
   downloads: Downloads;
+  /** Base64 32-byte key that encrypts webhook signing secrets at rest. Keep it out of the database. */
+  webhookKey: string;
+  /** Allows http and private hosts as webhook targets (local development only). */
+  allowInsecureWebhooks?: boolean;
   search: SearchProvider;
   /** Private object storage for media and digital assets (every read is a signed URL). */
   storage: StorageProvider;
