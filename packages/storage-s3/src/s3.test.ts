@@ -74,6 +74,17 @@ describe("s3 signing", () => {
     expect(u.toString()).not.toContain("SECRET");
   });
 
+  it("signs a download filename into the response disposition, safely encoded", async () => {
+    const s = make(fakeS3().fetch);
+    await s.put("a.bin", new Uint8Array([1]), "text/plain");
+    const u = new URL(
+      await s.signedUrl("a.bin", 60, { filename: "a\"b'c é.pdf" }),
+    );
+    expect(u.searchParams.get("response-content-disposition")).toBe(
+      "attachment; filename*=UTF-8''a%22b%27c%20%C3%A9.pdf",
+    );
+  });
+
   it("presigns differently per key and per expiry", async () => {
     const s = make(fakeS3().fetch);
     for (const k of ["a.bin", "b.bin"])

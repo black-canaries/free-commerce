@@ -2,6 +2,7 @@ import {
   ApiKeyError,
   CartError,
   CatalogError,
+  DownloadError,
   PrivacyError,
   ProviderError,
   WebhookError,
@@ -55,6 +56,16 @@ export const errorBody = (
   details?: Record<string, unknown>,
 ): ApiError => ({ code, message, requestId, ...(details && { details }) });
 
+const fromDownload = (err: DownloadError) => {
+  if (err.code === "not_found")
+    return new HttpError("not_found", "Download not found");
+  if (err.code === "unavailable")
+    return new HttpError("internal", "File temporarily unavailable");
+  return new HttpError("forbidden", `Download ${err.code}`, {
+    details: { reason: err.code },
+  });
+};
+
 /** Domain errors thrown by core services become the matching `HttpError`; anything else is left alone. */
 export const fromDomain = (err: unknown): HttpError | undefined => {
   if (err instanceof CatalogError)
@@ -72,6 +83,7 @@ export const fromDomain = (err: unknown): HttpError | undefined => {
     );
   if (err instanceof PrivacyError)
     return new HttpError("not_found", err.message);
+  if (err instanceof DownloadError) return fromDownload(err);
   if (err instanceof ProviderError && err.code === "rejected")
     return new HttpError("validation_failed", err.message);
 };

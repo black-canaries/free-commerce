@@ -18,6 +18,13 @@ export interface StorageProvider {
   get(key: string): Promise<{ body: Uint8Array; contentType: string } | null>;
   /** Idempotent: deleting a missing key succeeds. */
   delete(key: string): Promise<void>;
-  /** Short-lived read URL; throws `ProviderError("not_found")` if the key is missing. */
-  signedUrl(key: string, expiresInSeconds: number): Promise<string>;
+  /**
+   * Short-lived read URL; throws `ProviderError("not_found")` if the key is missing. With `filename` the
+   * response is an attachment saved under that name (adapters that cannot name it still force a download).
+   */
+  signedUrl(
+    key: string,
+    expiresInSeconds: number,
+    opts?: { filename?: string },
+  ): Promise<string>;
 }

@@ -11,6 +11,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { auditCases } from "./audit";
 import { discountCases } from "./discounts";
+import { downloadCases } from "./downloads";
 import { inventoryCases } from "./inventory";
 import { privacyCases } from "./privacy";
 import { refundCases } from "./refunds";
@@ -90,6 +91,7 @@ export function repositoryConformance(
     discountCases(make);
     auditCases(make);
     refundCases(make);
+    downloadCases(make);
     webhookCases(make);
     privacyCases(make);
 

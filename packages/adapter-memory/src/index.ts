@@ -5,6 +5,8 @@ import {
   type Database,
   type DiscountRepository,
   type DomainEvent,
+  type DownloadGrantRepository,
+  decideConsume,
   decideReserveRetry,
   decideSettle,
   type Entity,
@@ -21,6 +23,7 @@ import {
 import type {
   CustomerAddress,
   DiscountCode,
+  DownloadGrant,
   Reservation,
   StockLevel,
 } from "@free-commerce/schema";
@@ -34,6 +37,7 @@ type State = {
     | "audit"
     | "orders"
     | "addresses"
+    | "grants"
     | "webhookEndpoints"
     | "webhookDeliveries"
   >]: Repositories[K] extends Repository<infer T> ? Map<string, T> : never;
@@ -46,6 +50,7 @@ type State = {
   redemptions: Map<string, { codeId: string; customerKey?: string }>;
   outbox: Map<string, { event: DomainEvent; delivered: boolean }>;
   audit: Map<string, AuditEntry>;
+  grants: Map<string, DownloadGrant>;
   webhookEndpoints: Map<string, WebhookEndpoint>;
   webhookDeliveries: Map<string, WebhookDelivery>;
 };
@@ -63,6 +68,8 @@ const emptyState = (): State => ({
   redemptions: new Map(),
   outbox: new Map(),
   audit: new Map(),
+  grants: new Map(),
+  assets: new Map(),
   webhookEndpoints: new Map(),
   webhookDeliveries: new Map(),
 });
@@ -210,6 +217,21 @@ const discounts = (state: () => State): DiscountRepository => {
   };
 };
 
+const grants = (state: () => State): DownloadGrantRepository => ({
+  ...repository(() => state().grants),
+  async find(by, value) {
+    return [...state().grants.values()]
+      .filter((g) => g[by] === value)
+      .map((g) => structuredClone(g));
+  },
+  // Synchronous after entry, so atomic on the JS event loop.
+  async consume(id, now) {
+    const out = decideConsume(state().grants.get(id), now);
+    if (out.ok) state().grants.set(id, out.grant);
+    return out.ok ? { ok: true, grant: structuredClone(out.grant) } : out;
+  },
+});
+
 const audit = (rows: () => State["audit"]): AuditRepository => ({
   async append(entry) {
     if (!rows().has(entry.id)) rows().set(entry.id, structuredClone(entry));
@@ -302,6 +324,8 @@ const bind = (state: () => State): Repositories => ({
   orders: orders(() => state().orders),
   roles: repository(() => state().roles),
   audit: audit(() => state().audit),
+  assets: repository(() => state().assets),
+  grants: grants(state),
   webhookEndpoints: repository(() => state().webhookEndpoints),
   webhookDeliveries: webhookDeliveries(() => state().webhookDeliveries),
   outbox: outbox(() => state().outbox),
@@ -326,6 +350,8 @@ export function createMemoryDatabase(): Database {
           orders: new Map(state.orders),
           roles: new Map(state.roles),
           audit: new Map(state.audit),
+          assets: new Map(state.assets),
+          grants: new Map(state.grants),
           webhookEndpoints: new Map(state.webhookEndpoints),
           webhookDeliveries: new Map(state.webhookDeliveries),
           stock: new Map(state.stock),

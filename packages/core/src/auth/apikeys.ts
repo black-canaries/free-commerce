@@ -47,11 +47,11 @@ export class ApiKeyError extends Error {
   }
 }
 
-const hex = (bytes: Uint8Array) =>
+export const hex = (bytes: Uint8Array) =>
   Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 
 /** Keys are 256 random bits, so a fast hash is enough (no password-style stretching) and lookup is by hash. */
-const hashSecret = async (secret: string): Promise<string> =>
+export const hashSecret = async (secret: string): Promise<string> =>
   hex(
     new Uint8Array(
       await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret)),
